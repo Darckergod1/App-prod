@@ -70,7 +70,34 @@ const S_CLI = [
   {id:'c1',nombre:'Juan García',telefono:'6312001234',domicilio:'Calle Hidalgo 123',activo:true},
   {id:'c2',nombre:'María López',telefono:'6312005678',domicilio:'Av. Obregón 456',activo:true},
 ];
+// ============================================
+// NUEVO: Datos semilla para reparto
+// ============================================
+const S_RUTAS = [
+  {
+    id: 'r1',
+    fecha: new Date().toISOString(),
+    repartidor: '',
+    estado: 'planificada', // planificada | en_progreso | completada
+    clientes: [],
+    items: [],
+    entregas: [],
+    fechaFin: null
+  },
+];
 
+const S_ENTREGAS = [
+  {
+    id: 'e1',
+    rutaId: 'r1',
+    clienteId: 'c1',
+    fecha: new Date().toISOString(),
+    items: [{ id: 'p1', nombre: 'Frituras', cant: 2, precio: 10 }],
+    estado: 'entregado',
+    ubicacion: { lat: 28.5, lng: -106.0 },
+    firma: null
+  },
+];
 /* ── Icons ── */
 const Ic = ({children,size=18})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
 const CDown = ()=><Ic><polyline points="6 9 12 15 18 9"/></Ic>;
