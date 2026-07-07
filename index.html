@@ -3,10 +3,14 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DistribuPanel</title>
+<title>Productos-de-la-costa</title>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;background:#0f172a;color:#f1f5f9;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
@@ -23,20 +27,40 @@
 <script type="text/babel">
 const { useState, useEffect } = React;
 
-const store = {
-  get: k=>{ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch{ return null; } },
-  set: (k,v)=>{ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{} },
+const firebaseConfig = {
+  apiKey: "AIzaSyCFGYth-CoiTgZKIs2yApdVeGETizUzBfQ",
+  authDomain: "productos-de-la-costa.firebaseapp.com",
+  databaseURL: "https://productos-de-la-costa-default-rtdb.firebaseio.com",
+  projectId: "productos-de-la-costa",
+  storageBucket: "productos-de-la-costa.firebasestorage.app",
+  messagingSenderId: "491016634165",
+  appId: "1:491016634165:web:edd8277b3f80ccf2f6967c"
 };
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
 
 const uid = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2);
 const fmt = n=>'$'+Number(n||0).toFixed(2);
 const fDate = d=>new Date(d).toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'2-digit'});
 
-const DEF_USERS = [{id:'u1',username:'admin',nombre:'Administrador',password:'1234',role:'admin'}];
+// S_PROD y S_CLI se usan solo como datos semilla la primera vez que Firestore está vacío
 const S_PROD = [
-  {id:'p1',nombre:'Agua 20L',precio:25,stock:100,unidad:'garrafón'},
-  {id:'p2',nombre:'Hielo 5kg',precio:30,stock:50,unidad:'bolsa'},
-  {id:'p3',nombre:'Agua 1.5L',precio:12,stock:200,unidad:'botella'},
+  {id:'p1',nombre:'Frituras',precio:10,stock:50,unidad:'pieza',codigoBarras:'750000000001'},
+  {id:'p2',nombre:'Cacahuates',precio:15,stock:50,unidad:'pieza',codigoBarras:'750000000002'},
+  {id:'p3',nombre:'Papa ondulada',precio:13,stock:50,unidad:'pieza',codigoBarras:'750000000003'},
+  {id:'p4',nombre:'Chicharrón de puerco',precio:27,stock:50,unidad:'pieza',codigoBarras:'750000000004'},
+  {id:'p5',nombre:'Bolis paquete',precio:72,stock:30,unidad:'paquete',codigoBarras:'750000000005'},
+  {id:'p6',nombre:'Bolis pieza',precio:6,stock:150,unidad:'pieza',codigoBarras:'750000000006'},
+  {id:'p7',nombre:'Paquete fiesta',precio:85,stock:20,unidad:'paquete',codigoBarras:'750000000007'},
+  {id:'p8',nombre:'Paquete grande',precio:30,stock:20,unidad:'paquete',codigoBarras:'750000000008'},
+  {id:'p9',nombre:'Paquete mixto grande',precio:35,stock:20,unidad:'paquete',codigoBarras:'750000000009'},
+  {id:'p10',nombre:'Paquete jumbo',precio:250,stock:10,unidad:'paquete',codigoBarras:'750000000010'},
+  {id:'p11',nombre:'Paquete de sodas',precio:195,stock:15,unidad:'paquete (12 pzas)',codigoBarras:'750000000011'},
+  {id:'p12',nombre:'Paquete Maruchan',precio:185,stock:15,unidad:'paquete (12 pzas)',codigoBarras:'750000000012'},
+  {id:'p13',nombre:'Salsa botanera',precio:0,stock:10,unidad:'galón 4L',codigoBarras:'750000000013'},
+  {id:'p14',nombre:'Amper Energy',precio:210,stock:15,unidad:'12 pack',codigoBarras:'750000000014'},
+  {id:'p15',nombre:'Sueros',precio:290,stock:15,unidad:'paquete (12 pzas)',codigoBarras:'750000000015'},
 ];
 const S_CLI = [
   {id:'c1',nombre:'Juan García',telefono:'6312001234',domicilio:'Calle Hidalgo 123',activo:true},
@@ -85,25 +109,66 @@ function PwInp({value,onChange,placeholder}){
   </div>;
 }
 
+/* ── Escáner de código de barras (cámara) ── */
+function BarcodeScanner({onDetected,onClose}){
+  const [elId]=useState(()=>'scanner-'+uid());
+  const [err,setErr]=useState('');
+  useEffect(()=>{
+    let scanner=null, stopped=false, cancelled=false;
+    (async()=>{
+      try{
+        scanner=new Html5Qrcode(elId);
+        await scanner.start(
+          {facingMode:'environment'},
+          {fps:10,qrbox:{width:260,height:130}},
+          (decodedText)=>{
+            if(stopped||cancelled) return;
+            stopped=true;
+            scanner.stop().then(()=>scanner.clear()).catch(()=>{});
+            onDetected(decodedText);
+          },
+          ()=>{}
+        );
+      }catch(e){ if(!cancelled) setErr('No se pudo acceder a la cámara. Revisa los permisos del navegador.'); }
+    })();
+    return ()=>{ cancelled=true; if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); } };
+  },[]);
+  return <Modal title="📷 Escanear código de barras" onClose={onClose}>
+    {err
+      ?<div style={{fontSize:13,color:'#f87171',textAlign:'center',padding:'24px 0'}}>{err}</div>
+      :<div id={elId} style={{width:'100%',borderRadius:10,overflow:'hidden',background:'#000'}}/>}
+    <div style={{fontSize:11,color:'#64748b',textAlign:'center',marginTop:10}}>Apunta la cámara al código de barras del producto</div>
+  </Modal>;
+}
+
 /* ── Login ── */
-function Login({users,onLogin}){
-  const [user,setUser]=useState('');
+function Login(){
+  const [email,setEmail]=useState('');
   const [pw,setPw]=useState('');
   const [err,setErr]=useState('');
-  const handle=()=>{ const u=users.find(x=>x.username===user&&x.password===pw); u?onLogin(u):setErr('Usuario o contraseña incorrectos'); };
+  const [loading,setLoading]=useState(false);
+  const handle=async()=>{
+    if(!email||!pw){ setErr('Ingresa tu correo y contraseña'); return; }
+    setErr(''); setLoading(true);
+    try{
+      await auth.signInWithEmailAndPassword(email.trim(),pw);
+    }catch(e){
+      setErr('Correo o contraseña incorrectos');
+    }
+    setLoading(false);
+  };
   return <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:28}}>
     <div style={{fontSize:48,marginBottom:6}}>🚚</div>
-    <div style={{fontSize:24,fontWeight:800,marginBottom:2}}>Profuctos de la Costa</div>
+    <div style={{fontSize:24,fontWeight:800,marginBottom:2}}>Productos de la Costa</div>
     <div style={{fontSize:13,color:'#475569',marginBottom:36}}>Panel de administración</div>
     <div style={{width:'100%',maxWidth:340,background:'#1e293b',borderRadius:16,padding:24}}>
-      <Lbl>Usuario</Lbl>
-      <Inp value={user} onChange={e=>setUser(e.target.value)} placeholder="admin" style={{marginBottom:12}} autoComplete="username"/>
+      <Lbl>Correo electrónico</Lbl>
+      <Inp type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="correo@ejemplo.com" style={{marginBottom:12}} autoComplete="username"/>
       <Lbl>Contraseña</Lbl>
       <PwInp value={pw} onChange={e=>setPw(e.target.value)}/>
       {err&&<div style={{fontSize:12,color:'#f87171',marginBottom:10,textAlign:'center'}}>{err}</div>}
-      <BFill onClick={handle} style={{width:'100%',fontSize:14,padding:12,marginTop:4}}>Iniciar sesión →</BFill>
+      <BFill onClick={handle} disabled={loading} style={{width:'100%',fontSize:14,padding:12,marginTop:4,opacity:loading?0.6:1}}>{loading?'Ingresando…':'Iniciar sesión →'}</BFill>
     </div>
-    <div style={{marginTop:24,fontSize:11,color:'#334155'}}>admin / </div>
   </div>;
 }
 
@@ -164,26 +229,35 @@ function Dashboard({notas,productos,creditos}){
 }
 
 /* ── Productos ── */
-function Productos({productos,setProductos}){
+function Productos({productos}){
   const [sel,setSel]=useState([]);
   const [q,setQ]=useState('');
   const [form,setForm]=useState(null);
+  const [scanOpen,setScanOpen]=useState(false);
+  const [saving,setSaving]=useState(false);
   const list=productos.filter(p=>p.nombre.toLowerCase().includes(q.toLowerCase()));
   const allSel=list.length>0&&sel.length===list.length;
   const togSel=id=>setSel(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
   const togAll=()=>setSel(allSel?[]:list.map(p=>p.id));
-  const delSel=()=>{ setProductos(p=>p.filter(x=>!sel.includes(x.id))); setSel([]); };
-  const save=()=>{
+  const delSel=async()=>{
+    await Promise.all(sel.map(id=>db.collection('productos').doc(id).delete()));
+    setSel([]);
+  };
+  const save=async()=>{
     if(!form.nombre||!form.precio) return;
-    const item={...form,precio:+form.precio,stock:+form.stock};
-    if(item.id) setProductos(p=>p.map(x=>x.id===item.id?item:x));
-    else setProductos(p=>[...p,{...item,id:uid()}]);
-    setForm(null);
+    setSaving(true);
+    const item={nombre:form.nombre,precio:+form.precio,stock:+form.stock,unidad:form.unidad,codigoBarras:form.codigoBarras||''};
+    try{
+      if(form.id) await db.collection('productos').doc(form.id).update(item);
+      else await db.collection('productos').add(item);
+      setForm(null);
+    }catch(e){ alert('Error al guardar: '+e.message); }
+    setSaving(false);
   };
   return <div style={{padding:'16px 12px'}}>
     <Row style={{justifyContent:'space-between',marginBottom:12}}>
       <div style={{fontSize:20,fontWeight:800}}>📦 Productos</div>
-      <BFill onClick={()=>setForm({nombre:'',precio:'',stock:'',unidad:''})}>+ Nuevo</BFill>
+      <BFill onClick={()=>setForm({nombre:'',precio:'',stock:'',unidad:'',codigoBarras:''})}>+ Nuevo</BFill>
     </Row>
     <Inp placeholder="🔍 Buscar..." value={q} onChange={e=>setQ(e.target.value)} style={{marginBottom:10}}/>
     {sel.length>0&&<Row style={{marginBottom:10,background:'#450a0a',borderRadius:8,padding:'8px 12px'}}>
@@ -206,10 +280,11 @@ function Productos({productos,setProductos}){
           <span style={{fontWeight:800,color:'#38bdf8',fontSize:14}}>{fmt(p.precio)}</span>
         </Row>
         <Row style={{marginTop:4}}><Tag color={p.stock<10?'#ef4444':'#22c55e'}>{p.stock} {p.unidad}</Tag></Row>
+        {p.codigoBarras&&<div style={{fontSize:10,color:'#475569',marginTop:3}}>🏷️ {p.codigoBarras}</div>}
       </div>
       <Row style={{gap:4,flexShrink:0}}>
-        <button onClick={()=>setForm({...p,precio:String(p.precio),stock:String(p.stock)})} style={{background:'#172554',border:'none',color:'#60a5fa',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>✏️</button>
-        <button onClick={()=>setProductos(pr=>pr.filter(x=>x.id!==p.id))} style={{background:'#450a0a',border:'none',color:'#f87171',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>🗑</button>
+        <button onClick={()=>setForm({...p,precio:String(p.precio),stock:String(p.stock),codigoBarras:p.codigoBarras||''})} style={{background:'#172554',border:'none',color:'#60a5fa',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>✏️</button>
+        <button onClick={()=>db.collection('productos').doc(p.id).delete()} style={{background:'#450a0a',border:'none',color:'#f87171',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>🗑</button>
       </Row>
     </Card>)}
     {form&&<Modal title={form.id?'Editar Producto':'Nuevo Producto'} onClose={()=>setForm(null)}>
@@ -220,14 +295,20 @@ function Productos({productos,setProductos}){
         <div style={{flex:1}}><Lbl>Stock</Lbl><Inp type="number" value={form.stock} onChange={e=>setForm(f=>({...f,stock:e.target.value}))}/></div>
       </Row>
       <Lbl>Unidad</Lbl>
-      <Inp value={form.unidad} onChange={e=>setForm(f=>({...f,unidad:e.target.value}))} placeholder="garrafón, bolsa…" style={{marginBottom:16}}/>
+      <Inp value={form.unidad} onChange={e=>setForm(f=>({...f,unidad:e.target.value}))} placeholder="garrafón, bolsa…" style={{marginBottom:10}}/>
+      <Lbl>Código de barras</Lbl>
+      <Row style={{gap:8,marginBottom:16}}>
+        <Inp value={form.codigoBarras||''} onChange={e=>setForm(f=>({...f,codigoBarras:e.target.value}))} placeholder="Escanea o escribe el código" style={{flex:1}}/>
+        <BOut onClick={()=>setScanOpen(true)} style={{flexShrink:0,padding:'8px 12px'}}>📷</BOut>
+      </Row>
       <BFill onClick={save} style={{width:'100%'}}>💾 Guardar</BFill>
     </Modal>}
+    {scanOpen&&<BarcodeScanner onDetected={code=>{setForm(f=>({...f,codigoBarras:code}));setScanOpen(false);}} onClose={()=>setScanOpen(false)}/>}
   </div>;
 }
 
 /* ── Clientes ── */
-function Clientes({clientes,setClientes,notas,creditos}){
+function Clientes({clientes,notas,creditos}){
   const [filtro,setFiltro]=useState('activos');
   const [q,setQ]=useState('');
   const [form,setForm]=useState(null);
@@ -236,10 +317,11 @@ function Clientes({clientes,setClientes,notas,creditos}){
   const list=clientes
     .filter(c=>filtro==='activos'?c.activo:filtro==='inactivos'?!c.activo:c.activo&&!!cmap[c.id])
     .filter(c=>c.nombre.toLowerCase().includes(q.toLowerCase()));
-  const save=()=>{
+  const save=async()=>{
     if(!form.nombre) return;
-    if(form.id) setClientes(cs=>cs.map(c=>c.id===form.id?{...form}:c));
-    else setClientes(cs=>[...cs,{...form,id:uid(),activo:true}]);
+    const item={nombre:form.nombre,telefono:form.telefono||'',domicilio:form.domicilio||'',activo:form.activo!==undefined?form.activo:true};
+    if(form.id) await db.collection('clientes').doc(form.id).update(item);
+    else await db.collection('clientes').add(item);
     setForm(null);
   };
   return <div style={{padding:'16px 12px'}}>
@@ -266,7 +348,7 @@ function Clientes({clientes,setClientes,notas,creditos}){
         </div>
         <div style={{display:'flex',gap:4,flexShrink:0}}>
           <button onClick={()=>setForm({...c})} style={{background:'#172554',border:'none',color:'#60a5fa',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>✏️</button>
-          <button onClick={()=>setClientes(cs=>cs.map(x=>x.id===c.id?{...x,activo:!x.activo}:x))} style={{background:c.activo?'#450a0a':'#14532d',border:'none',color:c.activo?'#f87171':'#4ade80',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>{c.activo?'🚫':'✅'}</button>
+          <button onClick={()=>db.collection('clientes').doc(c.id).update({activo:!c.activo})} style={{background:c.activo?'#450a0a':'#14532d',border:'none',color:c.activo?'#f87171':'#4ade80',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>{c.activo?'🚫':'✅'}</button>
           <button onClick={()=>setHistId(histId===c.id?null:c.id)} style={{background:'#042f2e',border:'none',color:'#34d399',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>📋</button>
         </div>
       </Row>
@@ -293,7 +375,7 @@ function Clientes({clientes,setClientes,notas,creditos}){
 }
 
 /* ── Crear Nota ── */
-function CrearNota({productos,clientes,setClientes,notas,setNotas,creditos,setCreditos}){
+function CrearNota({productos,clientes}){
   const [cliOpen,setCliOpen]=useState(true);
   const [prodOpen,setProdOpen]=useState(false);
   const [cliMode,setCliMode]=useState('buscar');
@@ -303,6 +385,7 @@ function CrearNota({productos,clientes,setClientes,notas,setNotas,creditos,setCr
   const [cart,setCart]=useState([]);
   const [pago,setPago]=useState('contado');
   const [done,setDone]=useState(null);
+  const [saving,setSaving]=useState(false);
   const cliFilt=clientes.filter(c=>c.activo&&c.nombre.toLowerCase().includes(cliSearch.toLowerCase()));
   const addCart=p=>setCart(c=>{ const ex=c.find(x=>x.id===p.id); return ex?c.map(x=>x.id===p.id?{...x,cant:x.cant+1}:x):[...c,{id:p.id,nombre:p.nombre,precio:p.precio,cant:1}]; });
   const updQty=(id,v)=>{ if(v<1){setCart(c=>c.filter(x=>x.id!==id));return;} setCart(c=>c.map(x=>x.id===id?{...x,cant:v}:x)); };
@@ -314,13 +397,22 @@ function CrearNota({productos,clientes,setClientes,notas,setNotas,creditos,setCr
     const text=`🧾 *PEDIDO*\n👤 ${cl.nombre}\n\n${lines}\n\n💰 *Total: ${fmt(tot)}*\nPago: ${fp}`;
     return `https://wa.me/52${(cl.telefono||'').replace(/\D/g,'')}?text=${encodeURIComponent(text)}`;
   };
-  const guardar=()=>{
+  const guardar=async()=>{
     if(!canSave) return;
-    let cl=cliMode==='nuevo'?(()=>{ const nc={...nuevoC,id:uid(),domicilio:'',activo:true}; setClientes(cs=>[...cs,nc]); return nc; })():cliSel;
-    const nota={id:uid(),fecha:new Date().toISOString(),clienteId:cl.id,clienteNombre:cl.nombre,clienteTelefono:cl.telefono,items:cart.map(x=>({...x})),total,formaPago:pago};
-    setNotas(n=>[nota,...n]);
-    if(pago==='credito') setCreditos(cs=>[...cs,{id:uid(),notaId:nota.id,clienteId:cl.id,clienteNombre:cl.nombre,fecha:nota.fecha,total,saldo:total,abonos:[]}]);
-    setDone({nota,cl}); setCart([]); setCliSel(null); setNuevoC({nombre:'',telefono:''}); setCliMode('buscar');
+    setSaving(true);
+    try{
+      let cl=cliSel;
+      if(cliMode==='nuevo'){
+        const ref=await db.collection('clientes').add({nombre:nuevoC.nombre,telefono:nuevoC.telefono||'',domicilio:'',activo:true});
+        cl={id:ref.id,nombre:nuevoC.nombre,telefono:nuevoC.telefono||''};
+      }
+      const nota={fecha:new Date().toISOString(),clienteId:cl.id,clienteNombre:cl.nombre,clienteTelefono:cl.telefono||'',items:cart.map(x=>({...x})),total,formaPago:pago};
+      const notaRef=await db.collection('notas').add(nota);
+      if(pago==='credito') await db.collection('creditos').add({notaId:notaRef.id,clienteId:cl.id,clienteNombre:cl.nombre,fecha:nota.fecha,total,saldo:total,abonos:[]});
+      setDone({nota:{...nota,id:notaRef.id},cl});
+      setCart([]); setCliSel(null); setNuevoC({nombre:'',telefono:''}); setCliMode('buscar');
+    }catch(e){ alert('Error al guardar el pedido: '+e.message); }
+    setSaving(false);
   };
   if(done) return <div style={{padding:24,textAlign:'center'}}>
     <div style={{fontSize:52,marginBottom:8}}>✅</div>
@@ -403,7 +495,7 @@ function CrearNota({productos,clientes,setClientes,notas,setNotas,creditos,setCr
         ))}
       </Row>
       <Row style={{gap:8}}>
-        <BFill onClick={guardar} bg={canSave?'#38bdf8':'#334155'} color={canSave?'#0f172a':'#64748b'} style={{flex:1}} disabled={!canSave}>💾 Guardar pedido</BFill>
+        <BFill onClick={guardar} bg={canSave&&!saving?'#38bdf8':'#334155'} color={canSave&&!saving?'#0f172a':'#64748b'} style={{flex:1}} disabled={!canSave||saving}>{saving?'Guardando…':'💾 Guardar pedido'}</BFill>
         {cliente?.telefono&&<BFill onClick={()=>window.open(makeWA(cliente,cart,total,pago),'_blank')} bg="#25d366" style={{padding:'8px 16px',fontSize:18}}>📲</BFill>}
       </Row>
     </Card>}
@@ -411,14 +503,16 @@ function CrearNota({productos,clientes,setClientes,notas,setNotas,creditos,setCr
 }
 
 /* ── Créditos ── */
-function Creditos({creditos,setCreditos}){
+function Creditos({creditos}){
   const [abonoId,setAbonoId]=useState(null);
   const [monto,setMonto]=useState('');
   const pend=creditos.filter(c=>c.saldo>0);
   const totalPend=pend.reduce((s,c)=>s+c.saldo,0);
-  const abonar=id=>{
+  const abonar=async(c)=>{
     const m=parseFloat(monto); if(!m||m<=0) return;
-    setCreditos(cs=>cs.map(c=>c.id!==id?c:{...c,saldo:Math.max(0,c.saldo-m),abonos:[...c.abonos,{fecha:new Date().toISOString(),monto:m}]}));
+    const nuevoSaldo=Math.max(0,c.saldo-m);
+    const nuevosAbonos=[...c.abonos,{fecha:new Date().toISOString(),monto:m}];
+    await db.collection('creditos').doc(c.id).update({saldo:nuevoSaldo,abonos:nuevosAbonos});
     setMonto(''); setAbonoId(null);
   };
   return <div style={{padding:'16px 12px'}}>
@@ -446,38 +540,126 @@ function Creditos({creditos,setCreditos}){
       </div>}
       {abonoId===c.id?<Row style={{gap:8}}>
         <Inp type="number" placeholder="Monto abono…" value={monto} onChange={e=>setMonto(e.target.value)} style={{flex:1}}/>
-        <BFill onClick={()=>abonar(c.id)} bg="#22c55e" color="#0f172a" style={{padding:'8px 14px'}}>✓</BFill>
+        <BFill onClick={()=>abonar(c)} bg="#22c55e" color="#0f172a" style={{padding:'8px 14px'}}>✓</BFill>
         <button onClick={()=>{setAbonoId(null);setMonto('');}} style={{background:'none',border:'none',color:'#94a3b8',cursor:'pointer',display:'flex'}}><XI size={18}/></button>
       </Row>:<BOut onClick={()=>setAbonoId(c.id)} color="#22c55e" style={{width:'100%'}}>+ Registrar abono</BOut>}
     </Card>)}
   </div>;
 }
 
+/* ── Ruta de reparto ── */
+function RutaReparto({productos,rutas}){
+  const [scanOpen,setScanOpen]=useState(false);
+  const [cart,setCart]=useState([]);
+  const [msg,setMsg]=useState('');
+  const flash=m=>{ setMsg(m); setTimeout(()=>setMsg(''),2500); };
+  const handleScan=code=>{
+    setScanOpen(false);
+    const p=productos.find(x=>x.codigoBarras&&x.codigoBarras===code);
+    if(!p){ flash('⚠️ Código no encontrado: '+code); return; }
+    setCart(c=>{
+      const ex=c.find(x=>x.id===p.id);
+      return ex?c.map(x=>x.id===p.id?{...x,cant:x.cant+1}:x):[...c,{id:p.id,nombre:p.nombre,unidad:p.unidad,cant:1}];
+    });
+    flash('✅ '+p.nombre+' agregado');
+  };
+  const updQty=(id,v)=>{ if(v<1){setCart(c=>c.filter(x=>x.id!==id));return;} setCart(c=>c.map(x=>x.id===id?{...x,cant:v}:x)); };
+  const guardarRuta=async()=>{
+    if(cart.length===0) return;
+    await db.collection('rutas').add({fecha:new Date().toISOString(),items:cart});
+    setCart([]); flash('✅ Ruta guardada');
+  };
+  return <div style={{padding:'16px 12px'}}>
+    <div style={{fontSize:20,fontWeight:800,marginBottom:12}}>🚚 Ruta de reparto</div>
+    {msg&&<div style={{background:'#14532d',borderRadius:8,padding:'8px 12px',fontSize:13,color:'#4ade80',marginBottom:12}}>{msg}</div>}
+    <Card>
+      <BFill onClick={()=>setScanOpen(true)} style={{width:'100%',fontSize:14,padding:12}}>📷 Escanear producto</BFill>
+      <div style={{fontSize:11,color:'#64748b',marginTop:8,textAlign:'center'}}>Escanea el código de barras de cada producto que se cargue en la ruta; se agregará automáticamente.</div>
+    </Card>
+    {cart.length>0&&<Card>
+      <div style={{fontSize:11,color:'#64748b',fontWeight:700,marginBottom:10}}>PRODUCTOS ESCANEADOS ({cart.reduce((s,x)=>s+x.cant,0)})</div>
+      {cart.map(item=><Row key={item.id} style={{justifyContent:'space-between',marginBottom:10}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:13,fontWeight:600}}>{item.nombre}</div>
+          <div style={{fontSize:11,color:'#64748b'}}>{item.unidad}</div>
+        </div>
+        <Row style={{gap:5}}>
+          <button onClick={()=>updQty(item.id,item.cant-1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>-</button>
+          <span style={{minWidth:22,textAlign:'center',fontWeight:700,fontSize:14}}>{item.cant}</span>
+          <button onClick={()=>updQty(item.id,item.cant+1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>+</button>
+        </Row>
+      </Row>)}
+      <BFill onClick={guardarRuta} style={{width:'100%',marginTop:6}}>💾 Guardar ruta</BFill>
+    </Card>}
+    {rutas.length>0&&<Card>
+      <div style={{fontSize:11,color:'#64748b',fontWeight:700,marginBottom:10}}>RUTAS GUARDADAS</div>
+      {rutas.map(r=><div key={r.id} style={{paddingBottom:8,borderBottom:'1px solid #0f172a',marginBottom:8}}>
+        <Row style={{justifyContent:'space-between',marginBottom:4}}>
+          <span style={{fontSize:12,color:'#94a3b8'}}>{fDate(r.fecha)}</span>
+          <Tag color="#64748b">{r.items.reduce((s,x)=>s+x.cant,0)} artículos</Tag>
+        </Row>
+        {r.items.map(it=><div key={it.id} style={{fontSize:12,color:'#cbd5e1'}}>• {it.nombre} x{it.cant}</div>)}
+      </div>)}
+    </Card>}
+    {scanOpen&&<BarcodeScanner onDetected={handleScan} onClose={()=>setScanOpen(false)}/>}
+  </div>;
+}
+
 /* ── Configuración ── */
-function Configuracion({users,setUsers,currentUser,setCurrentUser,onBack,onLogout}){
+function Configuracion({currentUser,onBack,onLogout}){
   const [sub,setSub]=useState('perfil');
+  const [users,setUsersList]=useState([]);
   const [form,setForm]=useState(null);
   const [pw,setPw]=useState({old:'',new_:'',conf:''});
   const [msg,setMsg]=useState('');
   const [err,setErr]=useState('');
   const isAdmin=currentUser.role==='admin';
-  const flash=(m,isErr=false)=>{ isErr?setErr(m):setMsg(m); setTimeout(()=>{setErr('');setMsg('');},3000); };
-  const changePw=()=>{
-    if(pw.old!==currentUser.password){flash('Contraseña actual incorrecta',true);return;}
-    if(pw.new_.length<4){flash('Mínimo 4 caracteres',true);return;}
+  const flash=(m,isErr=false)=>{ isErr?setErr(m):setMsg(m); setTimeout(()=>{setErr('');setMsg('');},4000); };
+
+  useEffect(()=>{
+    if(!isAdmin) return;
+    const unsub=db.collection('usuarios').onSnapshot(snap=>{
+      setUsersList(snap.docs.map(d=>({id:d.id,...d.data()})));
+    });
+    return unsub;
+  },[isAdmin]);
+
+  const changePw=async()=>{
+    if(pw.new_.length<6){flash('Mínimo 6 caracteres',true);return;}
     if(pw.new_!==pw.conf){flash('Las contraseñas no coinciden',true);return;}
-    setUsers(us=>us.map(u=>u.id===currentUser.id?{...u,password:pw.new_}:u));
-    setCurrentUser(u=>({...u,password:pw.new_}));
-    setPw({old:'',new_:'',conf:''}); flash('✅ Contraseña actualizada');
+    try{
+      const cred=firebase.auth.EmailAuthProvider.credential(currentUser.email,pw.old);
+      await auth.currentUser.reauthenticateWithCredential(cred);
+      await auth.currentUser.updatePassword(pw.new_);
+      setPw({old:'',new_:'',conf:''}); flash('✅ Contraseña actualizada');
+    }catch(e){ flash('Contraseña actual incorrecta',true); }
   };
-  const saveUser=()=>{
-    if(!form.username||!form.nombre||!form.password){flash('Completa todos los campos',true);return;}
-    if(!form.id&&users.find(u=>u.username===form.username)){flash('Ese usuario ya existe',true);return;}
-    if(form.id) setUsers(us=>us.map(u=>u.id===form.id?{...form}:u));
-    else setUsers(us=>[...us,{...form,id:uid()}]);
-    setForm(null); flash('✅ Usuario guardado');
+
+  const saveUser=async()=>{
+    if(!form.nombre||!form.email||(!form.id&&!form.password)){flash('Completa todos los campos',true);return;}
+    try{
+      if(form.id){
+        await db.collection('usuarios').doc(form.id).update({nombre:form.nombre,role:form.role});
+        flash('✅ Usuario actualizado');
+      }else{
+        if(form.password.length<6){flash('La contraseña debe tener mínimo 6 caracteres',true);return;}
+        const secondary=firebase.apps.find(a=>a.name==='Secondary')||firebase.initializeApp(firebaseConfig,'Secondary');
+        const secAuth=secondary.auth();
+        const cred=await secAuth.createUserWithEmailAndPassword(form.email.trim(),form.password);
+        await db.collection('usuarios').doc(cred.user.uid).set({nombre:form.nombre,email:form.email.trim(),role:form.role});
+        await secAuth.signOut();
+        flash('✅ Usuario creado');
+      }
+      setForm(null);
+    }catch(e){ flash('Error: '+e.message,true); }
   };
-  const delUser=id=>{ if(id===currentUser.id){flash('No puedes eliminarte',true);return;} setUsers(us=>us.filter(u=>u.id!==id)); flash('Usuario eliminado'); };
+
+  const delUser=async(u)=>{
+    if(u.id===currentUser.uid){flash('No puedes eliminarte',true);return;}
+    await db.collection('usuarios').doc(u.id).delete();
+    flash('Perfil eliminado. Borra también la cuenta en Firebase Console → Authentication.');
+  };
+
   return <div style={{padding:'16px 12px'}}>
     <Row style={{marginBottom:16}}>
       <button onClick={onBack} style={{background:'none',border:'none',color:'#94a3b8',cursor:'pointer',fontSize:22,padding:'0 4px 0 0',lineHeight:1}}>←</button>
@@ -495,7 +677,7 @@ function Configuracion({users,setUsers,currentUser,setCurrentUser,onBack,onLogou
         <div style={{textAlign:'center',padding:'12px 0 16px'}}>
           <div style={{fontSize:52,marginBottom:8}}>👤</div>
           <div style={{fontSize:18,fontWeight:700}}>{currentUser.nombre}</div>
-          <div style={{fontSize:13,color:'#94a3b8',marginTop:2}}>@{currentUser.username}</div>
+          <div style={{fontSize:13,color:'#94a3b8',marginTop:2}}>✉️ {currentUser.email}</div>
           <Tag color={currentUser.role==='admin'?'#a78bfa':'#38bdf8'} style={{marginTop:8,display:'inline-block'}}>{currentUser.role}</Tag>
         </div>
       </Card>
@@ -509,7 +691,7 @@ function Configuracion({users,setUsers,currentUser,setCurrentUser,onBack,onLogou
     </Card>}
     {sub==='usuarios'&&isAdmin&&<>
       <Row style={{justifyContent:'flex-end',marginBottom:10}}>
-        <BFill onClick={()=>setForm({username:'',nombre:'',password:'',role:'usuario'})}>+ Nuevo usuario</BFill>
+        <BFill onClick={()=>setForm({nombre:'',email:'',password:'',role:'usuario'})}>+ Nuevo usuario</BFill>
       </Row>
       {users.map(u=><Card key={u.id}>
         <Row style={{justifyContent:'space-between'}}>
@@ -517,25 +699,26 @@ function Configuracion({users,setUsers,currentUser,setCurrentUser,onBack,onLogou
             <Row style={{gap:6,flexWrap:'wrap'}}>
               <span style={{fontWeight:700,fontSize:14}}>{u.nombre}</span>
               <Tag color={u.role==='admin'?'#a78bfa':'#38bdf8'}>{u.role}</Tag>
-              {u.id===currentUser.id&&<Tag color="#22c55e">Tú</Tag>}
+              {u.id===currentUser.uid&&<Tag color="#22c55e">Tú</Tag>}
             </Row>
-            <div style={{fontSize:12,color:'#94a3b8',marginTop:2}}>@{u.username}</div>
+            <div style={{fontSize:12,color:'#94a3b8',marginTop:2}}>✉️ {u.email}</div>
           </div>
           <Row style={{gap:4}}>
-            <button onClick={()=>setForm({...u})} style={{background:'#172554',border:'none',color:'#60a5fa',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>✏️</button>
-            {u.id!==currentUser.id&&<button onClick={()=>delUser(u.id)} style={{background:'#450a0a',border:'none',color:'#f87171',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>🗑</button>}
+            <button onClick={()=>setForm({id:u.id,nombre:u.nombre,email:u.email,role:u.role})} style={{background:'#172554',border:'none',color:'#60a5fa',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>✏️</button>
+            {u.id!==currentUser.uid&&<button onClick={()=>delUser(u)} style={{background:'#450a0a',border:'none',color:'#f87171',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>🗑</button>}
           </Row>
         </Row>
       </Card>)}
     </>}
     {form&&<Modal title={form.id?'Editar Usuario':'Nuevo Usuario'} onClose={()=>{setForm(null);setErr('');}}>
       <Lbl>Nombre completo</Lbl><Inp value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} style={{marginBottom:10}}/>
-      <Lbl>Usuario</Lbl><Inp value={form.username} onChange={e=>setForm(f=>({...f,username:e.target.value}))} style={{marginBottom:10}}/>
-      <Lbl>Contraseña</Lbl><PwInp value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))}/>
+      <Lbl>Correo electrónico</Lbl><Inp type="email" value={form.email} disabled={!!form.id} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="correo@ejemplo.com" style={{marginBottom:10,opacity:form.id?0.6:1}}/>
+      {!form.id&&<><Lbl>Contraseña</Lbl><PwInp value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))}/></>}
       <Lbl>Rol</Lbl>
       <select value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))} style={{background:'#0f172a',border:'1px solid #334155',borderRadius:8,padding:'8px 10px',color:'#f1f5f9',fontSize:13,width:'100%',marginBottom:16}}>
         <option value="usuario">usuario</option><option value="admin">admin</option>
       </select>
+      {form.id&&<div style={{fontSize:11,color:'#64748b',marginBottom:12}}>El correo y la contraseña solo los puede cambiar el propio usuario desde su pestaña de Contraseña.</div>}
       <BFill onClick={saveUser} style={{width:'100%'}}>💾 Guardar</BFill>
     </Modal>}
   </div>;
@@ -546,37 +729,80 @@ function App(){
   const [tab,setTab]=useState('home');
   const [prevTab,setPrevTab]=useState('home');
   const [currentUser,setCurrentUser]=useState(null);
-  const [users,setUsers]=useState(DEF_USERS);
-  const [productos,setProductos]=useState(S_PROD);
-  const [clientes,setClientes]=useState(S_CLI);
+  const [productos,setProductos]=useState([]);
+  const [clientes,setClientes]=useState([]);
   const [notas,setNotas]=useState([]);
   const [creditos,setCreditos]=useState([]);
-  const [loaded,setLoaded]=useState(false);
+  const [rutas,setRutas]=useState([]);
+  const [authChecked,setAuthChecked]=useState(false);
 
+  // Autenticación: escucha sesión de Firebase y carga el perfil (usuarios/{uid})
   useEffect(()=>{
-    try{
-      const u=store.get('da:users'); if(u) setUsers(u);
-      const p=store.get('da:productos'); if(p) setProductos(p);
-      const c=store.get('da:clientes'); if(c) setClientes(c);
-      const n=store.get('da:notas'); if(n) setNotas(n);
-      const cr=store.get('da:creditos'); if(cr) setCreditos(cr);
-    }catch{}
-    setLoaded(true);
+    const unsub=auth.onAuthStateChanged(async fbUser=>{
+      if(fbUser){
+        try{
+          const ref=db.collection('usuarios').doc(fbUser.uid);
+          const snap=await ref.get();
+          let perfil;
+          if(snap.exists){
+            perfil=snap.data();
+          }else{
+            // Primer inicio de sesión sin perfil: se crea como admin (útil para la primera cuenta)
+            perfil={nombre:fbUser.email.split('@')[0],email:fbUser.email,role:'admin'};
+            await ref.set(perfil);
+          }
+          setCurrentUser({uid:fbUser.uid,...perfil});
+        }catch(e){ setCurrentUser({uid:fbUser.uid,nombre:fbUser.email,email:fbUser.email,role:'usuario'}); }
+      }else{
+        setCurrentUser(null);
+      }
+      setAuthChecked(true);
+    });
+    return unsub;
   },[]);
 
-  useEffect(()=>{ if(loaded) store.set('da:users',users); },[users,loaded]);
-  useEffect(()=>{ if(loaded) store.set('da:productos',productos); },[productos,loaded]);
-  useEffect(()=>{ if(loaded) store.set('da:clientes',clientes); },[clientes,loaded]);
-  useEffect(()=>{ if(loaded) store.set('da:notas',notas); },[notas,loaded]);
-  useEffect(()=>{ if(loaded) store.set('da:creditos',creditos); },[creditos,loaded]);
+  // Suscripciones en tiempo real a Firestore (solo cuando hay sesión iniciada)
+  useEffect(()=>{
+    if(!currentUser) return;
+    const unsubs=[
+      db.collection('productos').onSnapshot(async snap=>{
+        if(snap.empty){
+          const batch=db.batch();
+          S_PROD.forEach(p=>{ const {id,...rest}=p; batch.set(db.collection('productos').doc(),rest); });
+          await batch.commit();
+          return;
+        }
+        setProductos(snap.docs.map(d=>({id:d.id,...d.data()})));
+      }),
+      db.collection('clientes').onSnapshot(async snap=>{
+        if(snap.empty){
+          const batch=db.batch();
+          S_CLI.forEach(c=>{ const {id,...rest}=c; batch.set(db.collection('clientes').doc(),rest); });
+          await batch.commit();
+          return;
+        }
+        setClientes(snap.docs.map(d=>({id:d.id,...d.data()})));
+      }),
+      db.collection('notas').orderBy('fecha','desc').onSnapshot(snap=>{
+        setNotas(snap.docs.map(d=>({id:d.id,...d.data()})));
+      }),
+      db.collection('creditos').onSnapshot(snap=>{
+        setCreditos(snap.docs.map(d=>({id:d.id,...d.data()})));
+      }),
+      db.collection('rutas').orderBy('fecha','desc').onSnapshot(snap=>{
+        setRutas(snap.docs.map(d=>({id:d.id,...d.data()})));
+      }),
+    ];
+    return ()=>unsubs.forEach(u=>u());
+  },[currentUser]);
 
   const goConfig=()=>{ if(tab!=='config') setPrevTab(tab); setTab('config'); };
-  const logout=()=>{ setCurrentUser(null); setTab('home'); };
-  const ctx={productos,setProductos,clientes,setClientes,notas,setNotas,creditos,setCreditos};
-  const TABS=[['home','🏠','Inicio'],['productos','📦','Productos'],['nota','🧾','Pedido'],['clientes','👥','Clientes'],['creditos','💳','Créditos']];
+  const logout=()=>{ auth.signOut(); setTab('home'); };
+  const ctx={productos,clientes,notas,creditos,rutas};
+  const TABS=[['home','🏠','Inicio'],['productos','📦','Productos'],['nota','🧾','Pedido'],['clientes','👥','Clientes'],['creditos','💳','Créditos'],['ruta','🚚','Ruta']];
 
-  if(!loaded) return <div style={{display:'flex',justifyContent:'center',alignItems:'center',height:'100vh',color:'#94a3b8',fontSize:14}}>Cargando…</div>;
-  if(!currentUser) return <Login users={users} onLogin={setCurrentUser}/>;
+  if(!authChecked) return <div style={{display:'flex',justifyContent:'center',alignItems:'center',height:'100vh',color:'#94a3b8',fontSize:14}}>Cargando…</div>;
+  if(!currentUser) return <Login/>;
 
   return <div style={{minHeight:'100vh',position:'relative',paddingTop:50,paddingBottom:tab==='config'?24:72}}>
     <div style={{position:'fixed',top:0,left:'50%',transform:'translateX(-50%)',width:'100%',maxWidth:420,background:'#0f172a',borderBottom:'1px solid #1e293b',zIndex:100,height:50,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 16px',boxSizing:'border-box'}}>
@@ -593,7 +819,8 @@ function App(){
     {tab==='nota'&&<CrearNota {...ctx}/>}
     {tab==='clientes'&&<Clientes {...ctx}/>}
     {tab==='creditos'&&<Creditos {...ctx}/>}
-    {tab==='config'&&<Configuracion users={users} setUsers={setUsers} currentUser={currentUser} setCurrentUser={setCurrentUser} onBack={()=>setTab(prevTab)} onLogout={logout}/>}
+    {tab==='ruta'&&<RutaReparto {...ctx}/>}
+    {tab==='config'&&<Configuracion currentUser={currentUser} onBack={()=>setTab(prevTab)} onLogout={logout}/>}
     {tab!=='config'&&<nav style={{position:'fixed',bottom:0,left:'50%',transform:'translateX(-50%)',width:'100%',maxWidth:420,background:'#1e293b',borderTop:'1px solid #334155',display:'flex',zIndex:200}}>
       {TABS.map(([id,ico,lbl])=>(
         <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:'10px 2px 7px',background:'none',border:'none',color:tab===id?'#38bdf8':'#64748b',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:1,fontSize:10,fontWeight:tab===id?700:400}}>
