@@ -550,10 +550,43 @@ function CrearNota({productos,clientes}){
           <div style={{fontSize:11,color:'#64748b'}}>{fmt(item.precio)} c/u</div>
         </div>
         <Row style={{gap:5,flexShrink:0}}>
-          <button onClick={()=>updQty(item.id,item.cant-1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>-</button>
-          <span style={{minWidth:22,textAlign:'center',fontWeight:700,fontSize:14}}>{item.cant}</span>
-          <button onClick={()=>updQty(item.id,item.cant+1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>+</button>
-        </Row>
+  <button onClick={()=>updQty(item.id,item.cant-1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>-</button>
+  <input 
+    type="number" 
+    inputMode="numeric"
+    value={item.cant === 0 ? '' : item.cant} 
+    min="0"
+    onFocus={(e) => {
+      if (item.cant === 0) {
+        e.target.value = '';
+      }
+      e.target.select(); // Selecciona el texto completo al tocarlo para facilitar la edición
+    }}
+    onChange={e => {
+      const val = parseInt(e.target.value, 10);
+      updQty(item.id, isNaN(val) ? 0 : val);
+    }}
+    onBlur={() => {
+      if (item.cant === 0) {
+        updQty(item.id, 0); // Dispara la lógica por defecto si se queda vacío
+      }
+    }}
+    style={{
+      background: '#0f172a',
+      border: '1px solid #334155',
+      borderRadius: 6,
+      color: '#f1f5f9',
+      fontSize: 14,
+      fontWeight: 700,
+      width: 45,
+      height: 26,
+      textAlign: 'center',
+      MozAppearance: 'textfield',
+      WebkitAppearance: 'none'
+    }}
+  />
+  <button onClick={()=>updQty(item.id,item.cant+1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>+</button>
+</Row>
         <div style={{minWidth:62,textAlign:'right',fontWeight:700,color:'#38bdf8',fontSize:13}}>{fmt(item.precio*item.cant)}</div>
       </Row>)}
       <div style={{borderTop:'1px solid #334155',paddingTop:10,marginTop:4,marginBottom:12}}>
