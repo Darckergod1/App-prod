@@ -11,6 +11,1340 @@
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+/* ── QR generator, vendorizado localmente (sin CDN) — usado para imprimir el QR de cada cliente ── */
+/* ═══════════════════════════════════════════════════════════════
+   qrcode.local.js
+   Generador de códigos QR — 100% local, sin CDN, sin llamadas de red.
+   ------------------------------------------------------------------
+   QUÉ ES
+   Encoder QR (algoritmo de Kazuhiko Arase / "QRCode for JavaScript",
+   (c) 2009, licencia MIT — es el mismo núcleo que usa la librería
+   'qrcodejs' de davidshimjs) + un wrapper que dibuja el código en un
+   <canvas> dentro del elemento que le indiques.
+
+   Se extrajo y adaptó desde v2_qrincluido__CORREGIDO.html para poder
+   reutilizarse en cualquier otro proyecto sin arrastrar el resto de
+   esa app.
+
+   API PÚBLICA (idéntica a qrcodejs, por si ya tenías código escrito
+   contra esa librería — no hay que tocarlo):
+
+     const qr = new QRCode(elementoOId, {
+       text:         'texto o URL a codificar',   // obligatorio
+       width:        200,                          // px, opcional (default 256)
+       height:       200,                          // px, opcional (default 256)
+       colorDark:    '#000000',                    // opcional
+       colorLight:   '#ffffff',                    // opcional
+       correctLevel: QRCode.CorrectLevel.H          // L | M | Q | H, opcional (default H)
+     });
+
+     qr.makeCode('otro texto');   // reemplaza el contenido del mismo QR
+     qr.clear();                  // limpia el elemento
+
+   NOTAS DE DISEÑO
+   - Incluye "zona de silencio" (quiet zone) de 4 módulos alrededor
+     del código. Es obligatoria por especificación: un QR sin margen
+     blanco alrededor falla al escanearse con cámaras reales, aunque
+     en una captura de pantalla "se vea bien". Si vas a maquetar el
+     QR dentro de una tarjeta/etiqueta, NO le quites espacio alrededor
+     pensando que "ya tiene margen el div contenedor": el margen debe
+     estar DENTRO de la imagen del propio QR.
+   - correctLevel H (30% de tolerancia a daño/manchas/dobleces) es el
+     recomendable para códigos que se van a imprimir y pegar en un
+     mostrador o pared.
+   - No requiere ninguna dependencia ni build step: es JS plano (ES5),
+     funciona con un <script> normal.
+═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════
+   QR ENCODER — vendorizado localmente (sin CDN, sin red)
+   Núcleo de 'QRCode for JavaScript' de Kazuhiko Arase (c) 2009
+   Licencia MIT. Es el MISMO algoritmo que usaba la librería
+   'qrcodejs' que antes se cargaba desde jsdelivr.net y que
+   dejaba de funcionar sin internet. Queda embebido aquí para
+   que funcione offline, siempre.
+   ═══════════════════════════════════════════════════════ */
+var QRLib = (function(){
+// ---- QRMode ----
+var QRMode = {
+    MODE_NUMBER :       1 << 0,
+    MODE_ALPHA_NUM :    1 << 1,
+    MODE_8BIT_BYTE :    1 << 2,
+    MODE_KANJI :        1 << 3
+};
+
+// ---- QRMaskPattern ----
+var QRMaskPattern = {
+	PATTERN000 : 0,
+	PATTERN001 : 1,
+	PATTERN010 : 2,
+	PATTERN011 : 3,
+	PATTERN100 : 4,
+	PATTERN101 : 5,
+	PATTERN110 : 6,
+	PATTERN111 : 7
+};
+
+// ---- QRErrorCorrectLevel ----
+var QRErrorCorrectLevel = {
+	L : 1,
+	M : 0,
+	Q : 3,
+	H : 2
+};
+
+
+// ---- QRMath ----
+var QRMath = {
+
+	glog : function(n) {
+	
+		if (n < 1) {
+			throw new Error("glog(" + n + ")");
+		}
+		
+		return QRMath.LOG_TABLE[n];
+	},
+	
+	gexp : function(n) {
+	
+		while (n < 0) {
+			n += 255;
+		}
+	
+		while (n >= 256) {
+			n -= 255;
+		}
+	
+		return QRMath.EXP_TABLE[n];
+	},
+	
+	EXP_TABLE : new Array(256),
+	
+	LOG_TABLE : new Array(256)
+
+};
+	
+for (var i = 0; i < 8; i++) {
+	QRMath.EXP_TABLE[i] = 1 << i;
+}
+for (var i = 8; i < 256; i++) {
+	QRMath.EXP_TABLE[i] = QRMath.EXP_TABLE[i - 4]
+		^ QRMath.EXP_TABLE[i - 5]
+		^ QRMath.EXP_TABLE[i - 6]
+		^ QRMath.EXP_TABLE[i - 8];
+}
+for (var i = 0; i < 255; i++) {
+	QRMath.LOG_TABLE[QRMath.EXP_TABLE[i] ] = i;
+}
+
+
+// ---- QRUtil ----
+
+var QRUtil = {
+
+    PATTERN_POSITION_TABLE : [
+        [],
+        [6, 18],
+        [6, 22],
+        [6, 26],
+        [6, 30],
+        [6, 34],
+        [6, 22, 38],
+        [6, 24, 42],
+        [6, 26, 46],
+        [6, 28, 50],
+        [6, 30, 54],        
+        [6, 32, 58],
+        [6, 34, 62],
+        [6, 26, 46, 66],
+        [6, 26, 48, 70],
+        [6, 26, 50, 74],
+        [6, 30, 54, 78],
+        [6, 30, 56, 82],
+        [6, 30, 58, 86],
+        [6, 34, 62, 90],
+        [6, 28, 50, 72, 94],
+        [6, 26, 50, 74, 98],
+        [6, 30, 54, 78, 102],
+        [6, 28, 54, 80, 106],
+        [6, 32, 58, 84, 110],
+        [6, 30, 58, 86, 114],
+        [6, 34, 62, 90, 118],
+        [6, 26, 50, 74, 98, 122],
+        [6, 30, 54, 78, 102, 126],
+        [6, 26, 52, 78, 104, 130],
+        [6, 30, 56, 82, 108, 134],
+        [6, 34, 60, 86, 112, 138],
+        [6, 30, 58, 86, 114, 142],
+        [6, 34, 62, 90, 118, 146],
+        [6, 30, 54, 78, 102, 126, 150],
+        [6, 24, 50, 76, 102, 128, 154],
+        [6, 28, 54, 80, 106, 132, 158],
+        [6, 32, 58, 84, 110, 136, 162],
+        [6, 26, 54, 82, 110, 138, 166],
+        [6, 30, 58, 86, 114, 142, 170]
+    ],
+
+    G15 : (1 << 10) | (1 << 8) | (1 << 5) | (1 << 4) | (1 << 2) | (1 << 1) | (1 << 0),
+    G18 : (1 << 12) | (1 << 11) | (1 << 10) | (1 << 9) | (1 << 8) | (1 << 5) | (1 << 2) | (1 << 0),
+    G15_MASK : (1 << 14) | (1 << 12) | (1 << 10)    | (1 << 4) | (1 << 1),
+
+    getBCHTypeInfo : function(data) {
+        var d = data << 10;
+        while (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G15) >= 0) {
+            d ^= (QRUtil.G15 << (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G15) ) );    
+        }
+        return ( (data << 10) | d) ^ QRUtil.G15_MASK;
+    },
+
+    getBCHTypeNumber : function(data) {
+        var d = data << 12;
+        while (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G18) >= 0) {
+            d ^= (QRUtil.G18 << (QRUtil.getBCHDigit(d) - QRUtil.getBCHDigit(QRUtil.G18) ) );    
+        }
+        return (data << 12) | d;
+    },
+
+    getBCHDigit : function(data) {
+
+        var digit = 0;
+
+        while (data !== 0) {
+            digit++;
+            data >>>= 1;
+        }
+
+        return digit;
+    },
+
+    getPatternPosition : function(typeNumber) {
+        return QRUtil.PATTERN_POSITION_TABLE[typeNumber - 1];
+    },
+
+    getMask : function(maskPattern, i, j) {
+        
+        switch (maskPattern) {
+            
+        case QRMaskPattern.PATTERN000 : return (i + j) % 2 === 0;
+        case QRMaskPattern.PATTERN001 : return i % 2 === 0;
+        case QRMaskPattern.PATTERN010 : return j % 3 === 0;
+        case QRMaskPattern.PATTERN011 : return (i + j) % 3 === 0;
+        case QRMaskPattern.PATTERN100 : return (Math.floor(i / 2) + Math.floor(j / 3) ) % 2 === 0;
+        case QRMaskPattern.PATTERN101 : return (i * j) % 2 + (i * j) % 3 === 0;
+        case QRMaskPattern.PATTERN110 : return ( (i * j) % 2 + (i * j) % 3) % 2 === 0;
+        case QRMaskPattern.PATTERN111 : return ( (i * j) % 3 + (i + j) % 2) % 2 === 0;
+
+        default :
+            throw new Error("bad maskPattern:" + maskPattern);
+        }
+    },
+
+    getErrorCorrectPolynomial : function(errorCorrectLength) {
+
+        var a = new QRPolynomial([1], 0);
+
+        for (var i = 0; i < errorCorrectLength; i++) {
+            a = a.multiply(new QRPolynomial([1, QRMath.gexp(i)], 0) );
+        }
+
+        return a;
+    },
+
+    getLengthInBits : function(mode, type) {
+
+        if (1 <= type && type < 10) {
+
+            // 1 - 9
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 10;
+            case QRMode.MODE_ALPHA_NUM  : return 9;
+            case QRMode.MODE_8BIT_BYTE  : return 8;
+            case QRMode.MODE_KANJI      : return 8;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else if (type < 27) {
+
+            // 10 - 26
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 12;
+            case QRMode.MODE_ALPHA_NUM  : return 11;
+            case QRMode.MODE_8BIT_BYTE  : return 16;
+            case QRMode.MODE_KANJI      : return 10;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else if (type < 41) {
+
+            // 27 - 40
+
+            switch(mode) {
+            case QRMode.MODE_NUMBER     : return 14;
+            case QRMode.MODE_ALPHA_NUM  : return 13;
+            case QRMode.MODE_8BIT_BYTE  : return 16;
+            case QRMode.MODE_KANJI      : return 12;
+            default :
+                throw new Error("mode:" + mode);
+            }
+
+        } else {
+            throw new Error("type:" + type);
+        }
+    },
+
+    getLostPoint : function(qrCode) {
+        
+        var moduleCount = qrCode.getModuleCount();
+        var lostPoint = 0;
+        var row = 0; 
+        var col = 0;
+
+        
+        // LEVEL1
+        
+        for (row = 0; row < moduleCount; row++) {
+
+            for (col = 0; col < moduleCount; col++) {
+
+                var sameCount = 0;
+                var dark = qrCode.isDark(row, col);
+
+                for (var r = -1; r <= 1; r++) {
+
+                    if (row + r < 0 || moduleCount <= row + r) {
+                        continue;
+                    }
+
+                    for (var c = -1; c <= 1; c++) {
+
+                        if (col + c < 0 || moduleCount <= col + c) {
+                            continue;
+                        }
+
+                        if (r === 0 && c === 0) {
+                            continue;
+                        }
+
+                        if (dark === qrCode.isDark(row + r, col + c) ) {
+                            sameCount++;
+                        }
+                    }
+                }
+
+                if (sameCount > 5) {
+                    lostPoint += (3 + sameCount - 5);
+                }
+            }
+        }
+
+        // LEVEL2
+
+        for (row = 0; row < moduleCount - 1; row++) {
+            for (col = 0; col < moduleCount - 1; col++) {
+                var count = 0;
+                if (qrCode.isDark(row,     col    ) ) count++;
+                if (qrCode.isDark(row + 1, col    ) ) count++;
+                if (qrCode.isDark(row,     col + 1) ) count++;
+                if (qrCode.isDark(row + 1, col + 1) ) count++;
+                if (count === 0 || count === 4) {
+                    lostPoint += 3;
+                }
+            }
+        }
+
+        // LEVEL3
+
+        for (row = 0; row < moduleCount; row++) {
+            for (col = 0; col < moduleCount - 6; col++) {
+                if (qrCode.isDark(row, col) && 
+                        !qrCode.isDark(row, col + 1) && 
+                         qrCode.isDark(row, col + 2) && 
+                         qrCode.isDark(row, col + 3) && 
+                         qrCode.isDark(row, col + 4) && 
+                        !qrCode.isDark(row, col + 5) && 
+                         qrCode.isDark(row, col + 6) ) {
+                    lostPoint += 40;
+                }
+            }
+        }
+
+        for (col = 0; col < moduleCount; col++) {
+            for (row = 0; row < moduleCount - 6; row++) {
+                if (qrCode.isDark(row, col) &&
+                        !qrCode.isDark(row + 1, col) &&
+                         qrCode.isDark(row + 2, col) &&
+                         qrCode.isDark(row + 3, col) &&
+                         qrCode.isDark(row + 4, col) &&
+                        !qrCode.isDark(row + 5, col) &&
+                         qrCode.isDark(row + 6, col) ) {
+                    lostPoint += 40;
+                }
+            }
+        }
+
+        // LEVEL4
+        
+        var darkCount = 0;
+
+        for (col = 0; col < moduleCount; col++) {
+            for (row = 0; row < moduleCount; row++) {
+                if (qrCode.isDark(row, col) ) {
+                    darkCount++;
+                }
+            }
+        }
+        
+        var ratio = Math.abs(100 * darkCount / moduleCount / moduleCount - 50) / 5;
+        lostPoint += ratio * 10;
+
+        return lostPoint;       
+    }
+
+};
+
+
+// ---- QRPolynomial ----
+
+function QRPolynomial(num, shift) {
+	if (num.length === undefined) {
+		throw new Error(num.length + "/" + shift);
+	}
+
+	var offset = 0;
+
+	while (offset < num.length && num[offset] === 0) {
+		offset++;
+	}
+
+	this.num = new Array(num.length - offset + shift);
+	for (var i = 0; i < num.length - offset; i++) {
+		this.num[i] = num[i + offset];
+	}
+}
+
+QRPolynomial.prototype = {
+
+	get : function(index) {
+		return this.num[index];
+	},
+	
+	getLength : function() {
+		return this.num.length;
+	},
+	
+	multiply : function(e) {
+	
+		var num = new Array(this.getLength() + e.getLength() - 1);
+	
+		for (var i = 0; i < this.getLength(); i++) {
+			for (var j = 0; j < e.getLength(); j++) {
+				num[i + j] ^= QRMath.gexp(QRMath.glog(this.get(i) ) + QRMath.glog(e.get(j) ) );
+			}
+		}
+	
+		return new QRPolynomial(num, 0);
+	},
+	
+	mod : function(e) {
+	
+		if (this.getLength() - e.getLength() < 0) {
+			return this;
+		}
+	
+		var ratio = QRMath.glog(this.get(0) ) - QRMath.glog(e.get(0) );
+	
+		var num = new Array(this.getLength() );
+		
+		for (var i = 0; i < this.getLength(); i++) {
+			num[i] = this.get(i);
+		}
+		
+		for (var x = 0; x < e.getLength(); x++) {
+			num[x] ^= QRMath.gexp(QRMath.glog(e.get(x) ) + ratio);
+		}
+	
+		// recursive call
+		return new QRPolynomial(num, 0).mod(e);
+	}
+};
+
+
+// ---- QRRSBlock ----
+
+function QRRSBlock(totalCount, dataCount) {
+	this.totalCount = totalCount;
+	this.dataCount  = dataCount;
+}
+
+QRRSBlock.RS_BLOCK_TABLE = [
+
+	// L
+	// M
+	// Q
+	// H
+
+	// 1
+	[1, 26, 19],
+	[1, 26, 16],
+	[1, 26, 13],
+	[1, 26, 9],
+	
+	// 2
+	[1, 44, 34],
+	[1, 44, 28],
+	[1, 44, 22],
+	[1, 44, 16],
+
+	// 3
+	[1, 70, 55],
+	[1, 70, 44],
+	[2, 35, 17],
+	[2, 35, 13],
+
+	// 4		
+	[1, 100, 80],
+	[2, 50, 32],
+	[2, 50, 24],
+	[4, 25, 9],
+	
+	// 5
+	[1, 134, 108],
+	[2, 67, 43],
+	[2, 33, 15, 2, 34, 16],
+	[2, 33, 11, 2, 34, 12],
+	
+	// 6
+	[2, 86, 68],
+	[4, 43, 27],
+	[4, 43, 19],
+	[4, 43, 15],
+	
+	// 7		
+	[2, 98, 78],
+	[4, 49, 31],
+	[2, 32, 14, 4, 33, 15],
+	[4, 39, 13, 1, 40, 14],
+	
+	// 8
+	[2, 121, 97],
+	[2, 60, 38, 2, 61, 39],
+	[4, 40, 18, 2, 41, 19],
+	[4, 40, 14, 2, 41, 15],
+	
+	// 9
+	[2, 146, 116],
+	[3, 58, 36, 2, 59, 37],
+	[4, 36, 16, 4, 37, 17],
+	[4, 36, 12, 4, 37, 13],
+	
+	// 10		
+	[2, 86, 68, 2, 87, 69],
+	[4, 69, 43, 1, 70, 44],
+	[6, 43, 19, 2, 44, 20],
+	[6, 43, 15, 2, 44, 16],
+
+	// 11
+	[4, 101, 81],
+	[1, 80, 50, 4, 81, 51],
+	[4, 50, 22, 4, 51, 23],
+	[3, 36, 12, 8, 37, 13],
+
+	// 12
+	[2, 116, 92, 2, 117, 93],
+	[6, 58, 36, 2, 59, 37],
+	[4, 46, 20, 6, 47, 21],
+	[7, 42, 14, 4, 43, 15],
+
+	// 13
+	[4, 133, 107],
+	[8, 59, 37, 1, 60, 38],
+	[8, 44, 20, 4, 45, 21],
+	[12, 33, 11, 4, 34, 12],
+
+	// 14
+	[3, 145, 115, 1, 146, 116],
+	[4, 64, 40, 5, 65, 41],
+	[11, 36, 16, 5, 37, 17],
+	[11, 36, 12, 5, 37, 13],
+
+	// 15
+	[5, 109, 87, 1, 110, 88],
+	[5, 65, 41, 5, 66, 42],
+	[5, 54, 24, 7, 55, 25],
+	[11, 36, 12],
+
+	// 16
+	[5, 122, 98, 1, 123, 99],
+	[7, 73, 45, 3, 74, 46],
+	[15, 43, 19, 2, 44, 20],
+	[3, 45, 15, 13, 46, 16],
+
+	// 17
+	[1, 135, 107, 5, 136, 108],
+	[10, 74, 46, 1, 75, 47],
+	[1, 50, 22, 15, 51, 23],
+	[2, 42, 14, 17, 43, 15],
+
+	// 18
+	[5, 150, 120, 1, 151, 121],
+	[9, 69, 43, 4, 70, 44],
+	[17, 50, 22, 1, 51, 23],
+	[2, 42, 14, 19, 43, 15],
+
+	// 19
+	[3, 141, 113, 4, 142, 114],
+	[3, 70, 44, 11, 71, 45],
+	[17, 47, 21, 4, 48, 22],
+	[9, 39, 13, 16, 40, 14],
+
+	// 20
+	[3, 135, 107, 5, 136, 108],
+	[3, 67, 41, 13, 68, 42],
+	[15, 54, 24, 5, 55, 25],
+	[15, 43, 15, 10, 44, 16],
+
+	// 21
+	[4, 144, 116, 4, 145, 117],
+	[17, 68, 42],
+	[17, 50, 22, 6, 51, 23],
+	[19, 46, 16, 6, 47, 17],
+
+	// 22
+	[2, 139, 111, 7, 140, 112],
+	[17, 74, 46],
+	[7, 54, 24, 16, 55, 25],
+	[34, 37, 13],
+
+	// 23
+	[4, 151, 121, 5, 152, 122],
+	[4, 75, 47, 14, 76, 48],
+	[11, 54, 24, 14, 55, 25],
+	[16, 45, 15, 14, 46, 16],
+
+	// 24
+	[6, 147, 117, 4, 148, 118],
+	[6, 73, 45, 14, 74, 46],
+	[11, 54, 24, 16, 55, 25],
+	[30, 46, 16, 2, 47, 17],
+
+	// 25
+	[8, 132, 106, 4, 133, 107],
+	[8, 75, 47, 13, 76, 48],
+	[7, 54, 24, 22, 55, 25],
+	[22, 45, 15, 13, 46, 16],
+
+	// 26
+	[10, 142, 114, 2, 143, 115],
+	[19, 74, 46, 4, 75, 47],
+	[28, 50, 22, 6, 51, 23],
+	[33, 46, 16, 4, 47, 17],
+
+	// 27
+	[8, 152, 122, 4, 153, 123],
+	[22, 73, 45, 3, 74, 46],
+	[8, 53, 23, 26, 54, 24],
+	[12, 45, 15, 28, 46, 16],
+
+	// 28
+	[3, 147, 117, 10, 148, 118],
+	[3, 73, 45, 23, 74, 46],
+	[4, 54, 24, 31, 55, 25],
+	[11, 45, 15, 31, 46, 16],
+
+	// 29
+	[7, 146, 116, 7, 147, 117],
+	[21, 73, 45, 7, 74, 46],
+	[1, 53, 23, 37, 54, 24],
+	[19, 45, 15, 26, 46, 16],
+
+	// 30
+	[5, 145, 115, 10, 146, 116],
+	[19, 75, 47, 10, 76, 48],
+	[15, 54, 24, 25, 55, 25],
+	[23, 45, 15, 25, 46, 16],
+
+	// 31
+	[13, 145, 115, 3, 146, 116],
+	[2, 74, 46, 29, 75, 47],
+	[42, 54, 24, 1, 55, 25],
+	[23, 45, 15, 28, 46, 16],
+
+	// 32
+	[17, 145, 115],
+	[10, 74, 46, 23, 75, 47],
+	[10, 54, 24, 35, 55, 25],
+	[19, 45, 15, 35, 46, 16],
+
+	// 33
+	[17, 145, 115, 1, 146, 116],
+	[14, 74, 46, 21, 75, 47],
+	[29, 54, 24, 19, 55, 25],
+	[11, 45, 15, 46, 46, 16],
+
+	// 34
+	[13, 145, 115, 6, 146, 116],
+	[14, 74, 46, 23, 75, 47],
+	[44, 54, 24, 7, 55, 25],
+	[59, 46, 16, 1, 47, 17],
+
+	// 35
+	[12, 151, 121, 7, 152, 122],
+	[12, 75, 47, 26, 76, 48],
+	[39, 54, 24, 14, 55, 25],
+	[22, 45, 15, 41, 46, 16],
+
+	// 36
+	[6, 151, 121, 14, 152, 122],
+	[6, 75, 47, 34, 76, 48],
+	[46, 54, 24, 10, 55, 25],
+	[2, 45, 15, 64, 46, 16],
+
+	// 37
+	[17, 152, 122, 4, 153, 123],
+	[29, 74, 46, 14, 75, 47],
+	[49, 54, 24, 10, 55, 25],
+	[24, 45, 15, 46, 46, 16],
+
+	// 38
+	[4, 152, 122, 18, 153, 123],
+	[13, 74, 46, 32, 75, 47],
+	[48, 54, 24, 14, 55, 25],
+	[42, 45, 15, 32, 46, 16],
+
+	// 39
+	[20, 147, 117, 4, 148, 118],
+	[40, 75, 47, 7, 76, 48],
+	[43, 54, 24, 22, 55, 25],
+	[10, 45, 15, 67, 46, 16],
+
+	// 40
+	[19, 148, 118, 6, 149, 119],
+	[18, 75, 47, 31, 76, 48],
+	[34, 54, 24, 34, 55, 25],
+	[20, 45, 15, 61, 46, 16]
+];
+
+QRRSBlock.getRSBlocks = function(typeNumber, errorCorrectLevel) {
+	
+	var rsBlock = QRRSBlock.getRsBlockTable(typeNumber, errorCorrectLevel);
+	
+	if (rsBlock === undefined) {
+		throw new Error("bad rs block @ typeNumber:" + typeNumber + "/errorCorrectLevel:" + errorCorrectLevel);
+	}
+
+	var length = rsBlock.length / 3;
+	
+	var list = [];
+	
+	for (var i = 0; i < length; i++) {
+
+		var count = rsBlock[i * 3 + 0];
+		var totalCount = rsBlock[i * 3 + 1];
+		var dataCount  = rsBlock[i * 3 + 2];
+
+		for (var j = 0; j < count; j++) {
+			list.push(new QRRSBlock(totalCount, dataCount) );	
+		}
+	}
+	
+	return list;
+};
+
+QRRSBlock.getRsBlockTable = function(typeNumber, errorCorrectLevel) {
+
+	switch(errorCorrectLevel) {
+	case QRErrorCorrectLevel.L :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 0];
+	case QRErrorCorrectLevel.M :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 1];
+	case QRErrorCorrectLevel.Q :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 2];
+	case QRErrorCorrectLevel.H :
+		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 3];
+	default :
+		return undefined;
+	}
+};
+
+
+// ---- QR8bitByte ----
+
+function QR8bitByte(data) {
+	this.mode = QRMode.MODE_8BIT_BYTE;
+	this.data = data;
+}
+
+QR8bitByte.prototype = {
+
+	getLength : function() {
+		return this.data.length;
+	},
+	
+	write : function(buffer) {
+		for (var i = 0; i < this.data.length; i++) {
+			// not JIS ...
+			buffer.put(this.data.charCodeAt(i), 8);
+		}
+	}
+};
+
+
+// ---- QRBitBuffer ----
+function QRBitBuffer() {
+	this.buffer = [];
+	this.length = 0;
+}
+
+QRBitBuffer.prototype = {
+
+	get : function(index) {
+		var bufIndex = Math.floor(index / 8);
+		return ( (this.buffer[bufIndex] >>> (7 - index % 8) ) & 1) == 1;
+	},
+	
+	put : function(num, length) {
+		for (var i = 0; i < length; i++) {
+			this.putBit( ( (num >>> (length - i - 1) ) & 1) == 1);
+		}
+	},
+	
+	getLengthInBits : function() {
+		return this.length;
+	},
+	
+	putBit : function(bit) {
+	
+		var bufIndex = Math.floor(this.length / 8);
+		if (this.buffer.length <= bufIndex) {
+			this.buffer.push(0);
+		}
+	
+		if (bit) {
+			this.buffer[bufIndex] |= (0x80 >>> (this.length % 8) );
+		}
+	
+		this.length++;
+	}
+};
+
+
+// ---- QRCodeModel (antes 'QRCode' en index.js) ----
+//---------------------------------------------------------------------
+// QRCodeModel for JavaScript
+//
+// Copyright (c) 2009 Kazuhiko Arase
+//
+// URL: http://www.d-project.com/
+//
+// Licensed under the MIT license:
+//   http://www.opensource.org/licenses/mit-license.php
+//
+// The word "QR Code" is registered trademark of 
+// DENSO WAVE INCORPORATED
+//   http://www.denso-wave.com/qrcode/faqpatent-e.html
+//
+//---------------------------------------------------------------------
+// Modified to work in node for this project (and some refactoring)
+//---------------------------------------------------------------------
+
+
+function QRCodeModel(typeNumber, errorCorrectLevel) {
+	this.typeNumber = typeNumber;
+	this.errorCorrectLevel = errorCorrectLevel;
+	this.modules = null;
+	this.moduleCount = 0;
+	this.dataCache = null;
+	this.dataList = [];
+}
+
+QRCodeModel.prototype = {
+	
+	addData : function(data) {
+		var newData = new QR8bitByte(data);
+		this.dataList.push(newData);
+		this.dataCache = null;
+	},
+	
+	isDark : function(row, col) {
+		if (row < 0 || this.moduleCount <= row || col < 0 || this.moduleCount <= col) {
+			throw new Error(row + "," + col);
+		}
+		return this.modules[row][col];
+	},
+
+	getModuleCount : function() {
+		return this.moduleCount;
+	},
+	
+	make : function() {
+		// Calculate automatically typeNumber if provided is < 1
+		if (this.typeNumber < 1 ){
+			var typeNumber = 1;
+			for (typeNumber = 1; typeNumber < 40; typeNumber++) {
+				var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, this.errorCorrectLevel);
+
+				var buffer = new QRBitBuffer();
+				var totalDataCount = 0;
+				for (var i = 0; i < rsBlocks.length; i++) {
+					totalDataCount += rsBlocks[i].dataCount;
+				}
+
+				for (var x = 0; x < this.dataList.length; x++) {
+					var data = this.dataList[x];
+					buffer.put(data.mode, 4);
+					buffer.put(data.getLength(), QRUtil.getLengthInBits(data.mode, typeNumber) );
+					data.write(buffer);
+				}
+				if (buffer.getLengthInBits() <= totalDataCount * 8)
+					break;
+			}
+			this.typeNumber = typeNumber;
+		}
+		this.makeImpl(false, this.getBestMaskPattern() );
+	},
+	
+	makeImpl : function(test, maskPattern) {
+		
+		this.moduleCount = this.typeNumber * 4 + 17;
+		this.modules = new Array(this.moduleCount);
+		
+		for (var row = 0; row < this.moduleCount; row++) {
+			
+			this.modules[row] = new Array(this.moduleCount);
+			
+			for (var col = 0; col < this.moduleCount; col++) {
+				this.modules[row][col] = null;//(col + row) % 3;
+			}
+		}
+	
+		this.setupPositionProbePattern(0, 0);
+		this.setupPositionProbePattern(this.moduleCount - 7, 0);
+		this.setupPositionProbePattern(0, this.moduleCount - 7);
+		this.setupPositionAdjustPattern();
+		this.setupTimingPattern();
+		this.setupTypeInfo(test, maskPattern);
+		
+		if (this.typeNumber >= 7) {
+			this.setupTypeNumber(test);
+		}
+	
+		if (this.dataCache === null) {
+			this.dataCache = QRCodeModel.createData(this.typeNumber, this.errorCorrectLevel, this.dataList);
+		}
+	
+		this.mapData(this.dataCache, maskPattern);
+	},
+
+	setupPositionProbePattern : function(row, col)  {
+		
+		for (var r = -1; r <= 7; r++) {
+			
+			if (row + r <= -1 || this.moduleCount <= row + r) continue;
+			
+			for (var c = -1; c <= 7; c++) {
+				
+				if (col + c <= -1 || this.moduleCount <= col + c) continue;
+				
+				if ( (0 <= r && r <= 6 && (c === 0 || c === 6) ) || 
+                     (0 <= c && c <= 6 && (r === 0 || r === 6) ) || 
+                     (2 <= r && r <= 4 && 2 <= c && c <= 4) ) {
+					this.modules[row + r][col + c] = true;
+				} else {
+					this.modules[row + r][col + c] = false;
+				}
+			}		
+		}		
+	},
+	
+	getBestMaskPattern : function() {
+	
+		var minLostPoint = 0;
+		var pattern = 0;
+	
+		for (var i = 0; i < 8; i++) {
+			
+			this.makeImpl(true, i);
+	
+			var lostPoint = QRUtil.getLostPoint(this);
+	
+			if (i === 0 || minLostPoint >  lostPoint) {
+				minLostPoint = lostPoint;
+				pattern = i;
+			}
+		}
+	
+		return pattern;
+	},
+	
+	createMovieClip : function(target_mc, instance_name, depth) {
+	
+		var qr_mc = target_mc.createEmptyMovieClip(instance_name, depth);
+		var cs = 1;
+	
+		this.make();
+
+		for (var row = 0; row < this.modules.length; row++) {
+			
+			var y = row * cs;
+			
+			for (var col = 0; col < this.modules[row].length; col++) {
+	
+				var x = col * cs;
+				var dark = this.modules[row][col];
+			
+				if (dark) {
+					qr_mc.beginFill(0, 100);
+					qr_mc.moveTo(x, y);
+					qr_mc.lineTo(x + cs, y);
+					qr_mc.lineTo(x + cs, y + cs);
+					qr_mc.lineTo(x, y + cs);
+					qr_mc.endFill();
+				}
+			}
+		}
+		
+		return qr_mc;
+	},
+
+	setupTimingPattern : function() {
+		
+		for (var r = 8; r < this.moduleCount - 8; r++) {
+			if (this.modules[r][6] !== null) {
+				continue;
+			}
+			this.modules[r][6] = (r % 2 === 0);
+		}
+	
+		for (var c = 8; c < this.moduleCount - 8; c++) {
+			if (this.modules[6][c] !== null) {
+				continue;
+			}
+			this.modules[6][c] = (c % 2 === 0);
+		}
+	},
+	
+	setupPositionAdjustPattern : function() {
+	
+		var pos = QRUtil.getPatternPosition(this.typeNumber);
+		
+		for (var i = 0; i < pos.length; i++) {
+		
+			for (var j = 0; j < pos.length; j++) {
+			
+				var row = pos[i];
+				var col = pos[j];
+				
+				if (this.modules[row][col] !== null) {
+					continue;
+				}
+				
+				for (var r = -2; r <= 2; r++) {
+				
+					for (var c = -2; c <= 2; c++) {
+					
+						if (Math.abs(r) === 2 || 
+                            Math.abs(c) === 2 ||
+                            (r === 0 && c === 0) ) {
+							this.modules[row + r][col + c] = true;
+						} else {
+							this.modules[row + r][col + c] = false;
+						}
+					}
+				}
+			}
+		}
+	},
+	
+	setupTypeNumber : function(test) {
+	
+		var bits = QRUtil.getBCHTypeNumber(this.typeNumber);
+        var mod;
+	
+		for (var i = 0; i < 18; i++) {
+			mod = (!test && ( (bits >> i) & 1) === 1);
+			this.modules[Math.floor(i / 3)][i % 3 + this.moduleCount - 8 - 3] = mod;
+		}
+	
+		for (var x = 0; x < 18; x++) {
+			mod = (!test && ( (bits >> x) & 1) === 1);
+			this.modules[x % 3 + this.moduleCount - 8 - 3][Math.floor(x / 3)] = mod;
+		}
+	},
+	
+	setupTypeInfo : function(test, maskPattern) {
+	
+		var data = (this.errorCorrectLevel << 3) | maskPattern;
+		var bits = QRUtil.getBCHTypeInfo(data);
+        var mod;
+	
+		// vertical		
+		for (var v = 0; v < 15; v++) {
+	
+			mod = (!test && ( (bits >> v) & 1) === 1);
+	
+			if (v < 6) {
+				this.modules[v][8] = mod;
+			} else if (v < 8) {
+				this.modules[v + 1][8] = mod;
+			} else {
+				this.modules[this.moduleCount - 15 + v][8] = mod;
+			}
+		}
+	
+		// horizontal
+		for (var h = 0; h < 15; h++) {
+	
+			mod = (!test && ( (bits >> h) & 1) === 1);
+			
+			if (h < 8) {
+				this.modules[8][this.moduleCount - h - 1] = mod;
+			} else if (h < 9) {
+				this.modules[8][15 - h - 1 + 1] = mod;
+			} else {
+				this.modules[8][15 - h - 1] = mod;
+			}
+		}
+	
+		// fixed module
+		this.modules[this.moduleCount - 8][8] = (!test);
+	
+	},
+	
+	mapData : function(data, maskPattern) {
+		
+		var inc = -1;
+		var row = this.moduleCount - 1;
+		var bitIndex = 7;
+		var byteIndex = 0;
+		
+		for (var col = this.moduleCount - 1; col > 0; col -= 2) {
+	
+			if (col === 6) col--;
+	
+			while (true) {
+	
+				for (var c = 0; c < 2; c++) {
+					
+					if (this.modules[row][col - c] === null) {
+						
+						var dark = false;
+	
+						if (byteIndex < data.length) {
+							dark = ( ( (data[byteIndex] >>> bitIndex) & 1) === 1);
+						}
+	
+						var mask = QRUtil.getMask(maskPattern, row, col - c);
+	
+						if (mask) {
+							dark = !dark;
+						}
+						
+						this.modules[row][col - c] = dark;
+						bitIndex--;
+	
+						if (bitIndex === -1) {
+							byteIndex++;
+							bitIndex = 7;
+						}
+					}
+				}
+								
+				row += inc;
+	
+				if (row < 0 || this.moduleCount <= row) {
+					row -= inc;
+					inc = -inc;
+					break;
+				}
+			}
+		}
+		
+	}
+
+};
+
+QRCodeModel.PAD0 = 0xEC;
+QRCodeModel.PAD1 = 0x11;
+
+QRCodeModel.createData = function(typeNumber, errorCorrectLevel, dataList) {
+	
+	var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, errorCorrectLevel);
+	
+	var buffer = new QRBitBuffer();
+	
+	for (var i = 0; i < dataList.length; i++) {
+		var data = dataList[i];
+		buffer.put(data.mode, 4);
+		buffer.put(data.getLength(), QRUtil.getLengthInBits(data.mode, typeNumber) );
+		data.write(buffer);
+	}
+
+	// calc num max data.
+	var totalDataCount = 0;
+	for (var x = 0; x < rsBlocks.length; x++) {
+		totalDataCount += rsBlocks[x].dataCount;
+	}
+
+	if (buffer.getLengthInBits() > totalDataCount * 8) {
+		throw new Error("code length overflow. (" + 
+            buffer.getLengthInBits() + 
+            ">" +  
+            totalDataCount * 8 + 
+            ")");
+	}
+
+	// end code
+	if (buffer.getLengthInBits() + 4 <= totalDataCount * 8) {
+		buffer.put(0, 4);
+	}
+
+	// padding
+	while (buffer.getLengthInBits() % 8 !== 0) {
+		buffer.putBit(false);
+	}
+
+	// padding
+	while (true) {
+		
+		if (buffer.getLengthInBits() >= totalDataCount * 8) {
+			break;
+		}
+		buffer.put(QRCodeModel.PAD0, 8);
+		
+		if (buffer.getLengthInBits() >= totalDataCount * 8) {
+			break;
+		}
+		buffer.put(QRCodeModel.PAD1, 8);
+	}
+
+	return QRCodeModel.createBytes(buffer, rsBlocks);
+};
+
+QRCodeModel.createBytes = function(buffer, rsBlocks) {
+
+	var offset = 0;
+	
+	var maxDcCount = 0;
+	var maxEcCount = 0;
+	
+	var dcdata = new Array(rsBlocks.length);
+	var ecdata = new Array(rsBlocks.length);
+	
+	for (var r = 0; r < rsBlocks.length; r++) {
+
+		var dcCount = rsBlocks[r].dataCount;
+		var ecCount = rsBlocks[r].totalCount - dcCount;
+
+		maxDcCount = Math.max(maxDcCount, dcCount);
+		maxEcCount = Math.max(maxEcCount, ecCount);
+		
+		dcdata[r] = new Array(dcCount);
+		
+		for (var i = 0; i < dcdata[r].length; i++) {
+			dcdata[r][i] = 0xff & buffer.buffer[i + offset];
+		}
+		offset += dcCount;
+		
+		var rsPoly = QRUtil.getErrorCorrectPolynomial(ecCount);
+		var rawPoly = new QRPolynomial(dcdata[r], rsPoly.getLength() - 1);
+
+		var modPoly = rawPoly.mod(rsPoly);
+		ecdata[r] = new Array(rsPoly.getLength() - 1);
+		for (var x = 0; x < ecdata[r].length; x++) {
+            var modIndex = x + modPoly.getLength() - ecdata[r].length;
+			ecdata[r][x] = (modIndex >= 0)? modPoly.get(modIndex) : 0;
+		}
+
+	}
+	
+	var totalCodeCount = 0;
+	for (var y = 0; y < rsBlocks.length; y++) {
+		totalCodeCount += rsBlocks[y].totalCount;
+	}
+
+	var data = new Array(totalCodeCount);
+	var index = 0;
+
+	for (var z = 0; z < maxDcCount; z++) {
+		for (var s = 0; s < rsBlocks.length; s++) {
+			if (z < dcdata[s].length) {
+				data[index++] = dcdata[s][z];
+			}
+		}
+	}
+
+	for (var xx = 0; xx < maxEcCount; xx++) {
+		for (var t = 0; t < rsBlocks.length; t++) {
+			if (xx < ecdata[t].length) {
+				data[index++] = ecdata[t][xx];
+			}
+		}
+	}
+
+	return data;
+
+};
+
+return { QRCodeModel: QRCodeModel, ErrorCorrectLevel: QRErrorCorrectLevel };
+})();
+
+/* ── Wrapper con la misma API pública que 'qrcodejs' (davidshimjs) ──
+   new QRCode(el, {text,width,height,colorDark,colorLight,correctLevel})
+   Así el resto del código de la app (printClientQR, etc.) no cambia. */
+(function(){
+  function QRCode(el, opts) {
+    if (typeof opts === 'string') opts = { text: opts };
+    opts = Object.assign({
+      width: 256, height: 256,
+      colorDark: '#000000', colorLight: '#ffffff',
+      correctLevel: QRLib.ErrorCorrectLevel.H
+    }, opts || {});
+    this._el   = (typeof el === 'string') ? document.getElementById(el) : el;
+    this._opts = opts;
+    this._draw(opts.text);
+  }
+  QRCode.CorrectLevel = QRLib.ErrorCorrectLevel; // {L,M,Q,H}
+  QRCode.prototype.clear = function () { this._el.innerHTML = ''; };
+  QRCode.prototype.makeCode = function (text) { this.clear(); this._draw(text); };
+  QRCode.prototype._draw = function (text) {
+    const qr = new QRLib.QRCodeModel(-1, this._opts.correctLevel);
+    qr.addData(text);
+    qr.make();
+    const n = qr.getModuleCount();
+    // Zona de silencio obligatoria: un QR sin margen blanco alrededor
+    // suele fallar al escanearse con cámaras reales, aunque en una
+    // captura de pantalla perfecta "se vea bien". La especificación
+    // pide un mínimo de 4 módulos de margen en cada lado.
+    const QUIET = 4;
+    const totalModules = n + QUIET * 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = this._opts.width;
+    canvas.height = this._opts.height;
+    const ctx = canvas.getContext('2d');
+    const cell = this._opts.width / totalModules;
+    ctx.fillStyle = this._opts.colorLight;
+    ctx.fillRect(0, 0, this._opts.width, this._opts.height);
+    ctx.fillStyle = this._opts.colorDark;
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (qr.isDark(r, c)) {
+          ctx.fillRect((c+QUIET)*cell, (r+QUIET)*cell, Math.ceil(cell), Math.ceil(cell));
+        }
+      }
+    }
+    this._el.appendChild(canvas);
+  };
+  window.QRCode = QRCode;
+})();
+
+
+</script>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;background:#0f172a;color:#f1f5f9;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
@@ -47,6 +1381,52 @@ const db = firebase.firestore();
 const uid = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2);
 const fmt = n=>'$'+Number(n||0).toFixed(2);
 const fDate = d=>new Date(d).toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'2-digit'});
+
+// Prefijo para diferenciar el QR de un cliente de un código de barras de producto
+const QR_CLIENTE_PREFIX='PDLC:CLI:';
+
+// Ubicación GPS real del dispositivo. Nunca truena: si el usuario niega el permiso
+// o el navegador no soporta geolocalización, resuelve null y el flujo continúa sin bloquear.
+const getUbicacion=()=>new Promise(resolve=>{
+  if(!navigator.geolocation){ resolve(null); return; }
+  navigator.geolocation.getCurrentPosition(
+    pos=>resolve({lat:pos.coords.latitude,lng:pos.coords.longitude,accuracy:pos.coords.accuracy,fecha:new Date().toISOString()}),
+    ()=>resolve(null),
+    {enableHighAccuracy:true,timeout:8000,maximumAge:15000}
+  );
+});
+const mapsLink=u=>u?`https://www.google.com/maps?q=${u.lat},${u.lng}`:null;
+
+// Genera el QR único del cliente y abre una ventana lista para imprimir (etiqueta de puerta)
+const imprimirQRCliente=(cliente)=>{
+  const holder=document.createElement('div');
+  holder.style.display='none';
+  document.body.appendChild(holder);
+  new QRCode(holder,{text:QR_CLIENTE_PREFIX+cliente.id,width:320,height:320,correctLevel:QRCode.CorrectLevel.H});
+  const canvas=holder.querySelector('canvas');
+  const dataUrl=canvas?canvas.toDataURL('image/png'):'';
+  document.body.removeChild(holder);
+  const w=window.open('','_blank');
+  if(!w){ alert('El navegador bloqueó la ventana de impresión. Habilita ventanas emergentes para este sitio.'); return; }
+  w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>QR ${cliente.nombre}</title>
+    <style>
+      *{box-sizing:border-box}
+      body{font-family:system-ui,-apple-system,sans-serif;text-align:center;padding:36px;color:#111}
+      img{width:280px;height:280px;image-rendering:pixelated}
+      h2{margin:14px 0 2px;font-size:20px}
+      p{color:#555;font-size:13px;margin:2px 0}
+      .marca{margin-top:18px;font-size:11px;color:#999;letter-spacing:.5px}
+      @media print{ body{padding:10px} }
+    </style></head>
+    <body>
+      <img src="${dataUrl}" alt="QR"/>
+      <h2>${cliente.nombre}</h2>
+      <p>Escanea este código cuando el repartidor visite tu domicilio</p>
+      <div class="marca">Productos de la costa</div>
+    </body></html>`);
+  w.document.close();
+  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} },350);
+};
 
 // S_PROD y S_CLI se usan solo como datos semilla la primera vez que Firestore está vacío
 const S_PROD = [
@@ -446,6 +1826,7 @@ function Clientes({clientes,notas,creditos}){
           <div style={{fontSize:12,color:'#94a3b8'}}>📍 {c.domicilio||'—'}</div>
         </div>
         <div style={{display:'flex',gap:4,flexShrink:0}}>
+          <button onClick={()=>imprimirQRCliente(c)} title="Imprimir QR" style={{background:'#3b0764',border:'none',color:'#c084fc',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>🖨️</button>
           <button onClick={()=>setForm({...c})} style={{background:'#172554',border:'none',color:'#60a5fa',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>✏️</button>
           <button onClick={()=>db.collection('clientes').doc(c.id).update({activo:!c.activo})} style={{background:c.activo?'#450a0a':'#14532d',border:'none',color:c.activo?'#f87171':'#4ade80',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>{c.activo?'🚫':'✅'}</button>
           <button onClick={()=>setHistId(histId===c.id?null:c.id)} style={{background:'#042f2e',border:'none',color:'#34d399',borderRadius:6,padding:'5px 9px',cursor:'pointer'}}>📋</button>
@@ -674,7 +2055,7 @@ function Creditos({creditos}){
 }
 
 /* ── Ruta de reparto ── */
-function RutaReparto({productos,rutas}){
+function RutaReparto({productos,clientes,rutas}){
   const [scanOpen,setScanOpen]=useState(false);
   const [cart,setCart]=useState([]);
   const [repartidor,setRepartidor]=useState('');
@@ -684,6 +2065,70 @@ function RutaReparto({productos,rutas}){
   const [regreso,setRegreso]=useState({});
   const [scanCloseOpen,setScanCloseOpen]=useState(false);
   const flash=m=>{ setMsg(m); setTimeout(()=>setMsg(''),2500); };
+
+  /* ── Visitas a clientes (QR en la puerta) ── */
+  const abiertas=rutas.filter(r=>r.estado==='abierta');
+  const [rutaActivaId,setRutaActivaId]=useState(null);
+  const rutaActiva=abiertas.find(r=>r.id===rutaActivaId)||(abiertas.length===1?abiertas[0]:null);
+  const [visitOpen,setVisitOpen]=useState(false);
+  const [entregaCliente,setEntregaCliente]=useState(null);
+  const [entregaCart,setEntregaCart]=useState([]);
+  const [entregaPago,setEntregaPago]=useState('contado');
+  const [entregaScanOpen,setEntregaScanOpen]=useState(false);
+  const [savingEntrega,setSavingEntrega]=useState(false);
+
+  const handleScanCliente=async code=>{
+    setVisitOpen(false);
+    if(!code.startsWith(QR_CLIENTE_PREFIX)){ flash('⚠️ Ese código no es un QR de cliente'); return; }
+    if(!rutaActiva){ flash('⚠️ Selecciona o carga una ruta activa primero'); return; }
+    const clienteId=code.slice(QR_CLIENTE_PREFIX.length);
+    const cliente=clientes.find(c=>c.id===clienteId);
+    if(!cliente){ flash('⚠️ Cliente no encontrado (QR inválido o cliente eliminado)'); return; }
+    const ubicacionCheckin=await getUbicacion();
+    db.collection('visitas').add({rutaId:rutaActiva.id,clienteId:cliente.id,clienteNombre:cliente.nombre,fecha:new Date().toISOString(),ubicacion:ubicacionCheckin}).catch(()=>{});
+    setEntregaCliente({cliente,ubicacionCheckin});
+    setEntregaCart([]); setEntregaPago('contado');
+    flash('📍 Check-in: '+cliente.nombre);
+  };
+  const handleScanEntregaProducto=code=>{
+    setEntregaScanOpen(false);
+    const p=productos.find(x=>x.codigoBarras&&x.codigoBarras===code);
+    if(!p){ flash('⚠️ Código no encontrado: '+code); return; }
+    setEntregaCart(c=>{
+      const ex=c.find(x=>x.id===p.id);
+      return ex?c.map(x=>x.id===p.id?{...x,cant:x.cant+1}:x):[...c,{id:p.id,nombre:p.nombre,unidad:p.unidad,precio:p.precio,cant:1}];
+    });
+  };
+  const updEntregaQty=(id,v)=>{ if(v<1){setEntregaCart(c=>c.filter(x=>x.id!==id));return;} setEntregaCart(c=>c.map(x=>x.id===id?{...x,cant:v}:x)); };
+  const entregaTotal=entregaCart.reduce((s,x)=>s+x.precio*x.cant,0);
+  const confirmarEntrega=async()=>{
+    if(entregaCart.length===0||savingEntrega||!entregaCliente||!rutaActiva) return;
+    setSavingEntrega(true);
+    try{
+      const ubicacionEntrega=await getUbicacion();
+      const fecha=new Date().toISOString();
+      const cliente=entregaCliente.cliente;
+      const notaRef=db.collection('notas').doc();
+      const credRef=entregaPago==='credito'?db.collection('creditos').doc():null;
+      const notaData={fecha,clienteId:cliente.id,clienteNombre:cliente.nombre,clienteTelefono:cliente.telefono||'',items:entregaCart.map(x=>({...x})),total:entregaTotal,formaPago:entregaPago,tipo:'reparto',rutaId:rutaActiva.id};
+      await db.runTransaction(async(t)=>{
+        t.set(notaRef,notaData);
+        if(credRef) t.set(credRef,{notaId:notaRef.id,clienteId:cliente.id,clienteNombre:cliente.nombre,fecha,total:entregaTotal,saldo:entregaTotal,abonos:[]});
+      });
+      await db.collection('rutas').doc(rutaActiva.id).update({
+        entregas:firebase.firestore.FieldValue.arrayUnion({
+          clienteId:cliente.id,clienteNombre:cliente.nombre,fecha,
+          items:entregaCart.map(x=>({id:x.id,nombre:x.nombre,unidad:x.unidad,cant:x.cant})),
+          total:entregaTotal,formaPago:entregaPago,
+          ubicacionCheckin:entregaCliente.ubicacionCheckin||null,
+          ubicacionEntrega:ubicacionEntrega||null
+        })
+      });
+      setEntregaCliente(null); setEntregaCart([]);
+      flash('✅ Entrega registrada: '+cliente.nombre);
+    }catch(e){ alert('Error al registrar entrega: '+e.message); }
+    setSavingEntrega(false);
+  };
 
   /* ── Cargar ruta (salida) ── */
   const handleScan=code=>{
@@ -702,7 +2147,7 @@ function RutaReparto({productos,rutas}){
     if(!repartidor.trim()){ flash('⚠️ Indica el repartidor'); return; }
     setSaving(true);
     try{
-      await db.collection('rutas').add({fecha:new Date().toISOString(),repartidor:repartidor.trim(),estado:'abierta',salida:cart,regreso:[]});
+      await db.collection('rutas').add({fecha:new Date().toISOString(),repartidor:repartidor.trim(),estado:'abierta',salida:cart,regreso:[],entregas:[]});
       setCart([]); setRepartidor(''); flash('✅ Ruta cargada');
     }catch(e){ alert('Error al guardar ruta: '+e.message); }
     setSaving(false);
@@ -711,7 +2156,12 @@ function RutaReparto({productos,rutas}){
   /* ── Cerrar ruta (registrar regreso) ── */
   const abrirCierre=r=>{
     setClosing(r);
-    const init={}; (r.salida||r.items||[]).forEach(it=>{ init[it.id]=0; });
+    const items=r.salida||r.items||[];
+    const entregadoMap={};
+    (r.entregas||[]).forEach(e=>e.items.forEach(it=>{ entregadoMap[it.id]=(entregadoMap[it.id]||0)+it.cant; }));
+    const init={};
+    // Por defecto se asume que regresa todo lo que no se entregó a un cliente registrado (el repartidor puede ajustar)
+    items.forEach(it=>{ init[it.id]=Math.max(0,it.cant-(entregadoMap[it.id]||0)); });
     setRegreso(init);
   };
   const scanRegreso=code=>{
@@ -760,7 +2210,7 @@ function RutaReparto({productos,rutas}){
       {msg&&<div style={{background:'#14532d',borderRadius:8,padding:'8px 12px',fontSize:13,color:'#4ade80',marginBottom:12}}>{msg}</div>}
       <Card>
         <BFill onClick={()=>setScanCloseOpen(true)} style={{width:'100%',fontSize:14,padding:12,marginBottom:10}}>📷 Escanear regreso</BFill>
-        <div style={{fontSize:11,color:'#64748b',marginBottom:12,textAlign:'center'}}>Escanea o ajusta manualmente cuántas piezas regresaron. El resto se cuenta como vendido en la calle.</div>
+        <div style={{fontSize:11,color:'#64748b',marginBottom:12,textAlign:'center'}}>Ya se restaron los productos entregados a clientes visitados. Ajusta lo que falte (pérdidas, ventas sin visita, etc.).</div>
         {items.map(it=><Row key={it.id} style={{justifyContent:'space-between',marginBottom:10}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:13,fontWeight:600}}>{it.nombre}</div>
@@ -781,12 +2231,14 @@ function RutaReparto({productos,rutas}){
   return <div style={{padding:'16px 12px'}}>
     <div style={{fontSize:20,fontWeight:800,marginBottom:12}}>🚚 Ruta de reparto</div>
     {msg&&<div style={{background:'#14532d',borderRadius:8,padding:'8px 12px',fontSize:13,color:'#4ade80',marginBottom:12}}>{msg}</div>}
+
     <Card>
       <Lbl>Repartidor</Lbl>
       <Inp value={repartidor} onChange={e=>setRepartidor(e.target.value)} placeholder="Nombre del repartidor" style={{marginBottom:10}}/>
       <BFill onClick={()=>setScanOpen(true)} style={{width:'100%',fontSize:14,padding:12}}>📷 Escanear producto</BFill>
       <div style={{fontSize:11,color:'#64748b',marginTop:8,textAlign:'center'}}>Escanea el código de barras de cada producto que se cargue en la ruta; se agregará automáticamente.</div>
     </Card>
+
     {cart.length>0&&<Card>
       <div style={{fontSize:11,color:'#64748b',fontWeight:700,marginBottom:10}}>PRODUCTOS ESCANEADOS ({cart.reduce((s,x)=>s+x.cant,0)})</div>
       {cart.map(item=><Row key={item.id} style={{justifyContent:'space-between',marginBottom:10}}>
@@ -802,6 +2254,18 @@ function RutaReparto({productos,rutas}){
       </Row>)}
       <BFill onClick={guardarRuta} style={{width:'100%',marginTop:6,opacity:saving?0.6:1}} disabled={saving}>{saving?'Guardando…':'💾 Cargar ruta'}</BFill>
     </Card>}
+
+    <Card>
+      <div style={{fontSize:11,color:'#64748b',fontWeight:700,marginBottom:8}}>VISITAR CLIENTE (QR EN LA PUERTA)</div>
+      {abiertas.length===0&&<div style={{fontSize:12,color:'#64748b',marginBottom:8}}>Carga una ruta arriba para poder registrar visitas.</div>}
+      {abiertas.length>1&&<select value={rutaActivaId||''} onChange={e=>setRutaActivaId(e.target.value)} style={{width:'100%',background:'#0f172a',border:'1px solid #334155',borderRadius:8,padding:'8px 10px',color:'#f1f5f9',fontSize:13,marginBottom:10}}>
+        <option value="">Selecciona la ruta activa…</option>
+        {abiertas.map(r=><option key={r.id} value={r.id}>{r.repartidor} · {fDate(r.fecha)}</option>)}
+      </select>}
+      <BFill onClick={()=>setVisitOpen(true)} bg="#a855f7" style={{width:'100%',fontSize:14,padding:12,opacity:rutaActiva?1:0.5}} disabled={!rutaActiva}>📍 Escanear QR de cliente</BFill>
+      <div style={{fontSize:11,color:'#64748b',marginTop:8,textAlign:'center'}}>Registra la llegada (con ubicación GPS) y abre la entrega para ese cliente.</div>
+    </Card>
+
     {rutas.length>0&&<Card>
       <div style={{fontSize:11,color:'#64748b',fontWeight:700,marginBottom:10}}>RUTAS</div>
       {rutas.map(r=>{
@@ -819,11 +2283,54 @@ function RutaReparto({productos,rutas}){
           </Row>
           <div style={{fontSize:12,color:'#cbd5e1',marginBottom:6}}>Cargado: {totalCargado}{cerrada?` · Vendido: ${vendido} · Regresado: ${totalCargado-vendido}`:''}</div>
           {items.map(it=><div key={it.id} style={{fontSize:12,color:'#cbd5e1'}}>• {it.nombre} x{it.cant}</div>)}
+          {r.entregas&&r.entregas.length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid #0f172a'}}>
+            <div style={{fontSize:11,color:'#64748b',fontWeight:700,marginBottom:6}}>VISITAS A CLIENTES ({r.entregas.length})</div>
+            {r.entregas.map((e,i)=>{ const u=e.ubicacionEntrega||e.ubicacionCheckin; const link=mapsLink(u); return <Row key={i} style={{justifyContent:'space-between',marginBottom:4}}>
+              <div style={{fontSize:12}}>
+                <span style={{fontWeight:600}}>{e.clienteNombre}</span>
+                <span style={{color:'#64748b'}}> · {fmt(e.total)} · {e.formaPago}</span>
+              </div>
+              {link&&<a href={link} target="_blank" rel="noreferrer" style={{fontSize:11,color:'#38bdf8'}}>📍 mapa</a>}
+            </Row>;})}
+          </div>}
           {!cerrada&&<BOut onClick={()=>abrirCierre(r)} color="#facc15" style={{marginTop:8,width:'100%'}}>📦 Cerrar ruta</BOut>}
         </div>;
       })}
     </Card>}
+
     {scanOpen&&<BarcodeScanner onDetected={handleScan} onClose={()=>setScanOpen(false)}/>}
+    {visitOpen&&<BarcodeScanner onDetected={handleScanCliente} onClose={()=>setVisitOpen(false)}/>}
+
+    {entregaCliente&&<Modal title={`📦 Entrega — ${entregaCliente.cliente.nombre}`} onClose={()=>{setEntregaCliente(null);setEntregaCart([]);}}>
+      <div style={{fontSize:11,color:'#64748b',marginBottom:10}}>{entregaCliente.ubicacionCheckin?`📍 Ubicación registrada (±${Math.round(entregaCliente.ubicacionCheckin.accuracy||0)}m)`:'⚠️ No se pudo obtener ubicación GPS'}</div>
+      <BFill onClick={()=>setEntregaScanOpen(true)} style={{width:'100%',fontSize:14,padding:12,marginBottom:10}}>📷 Escanear producto</BFill>
+      {entregaCart.length>0&&<>
+        {entregaCart.map(item=><Row key={item.id} style={{justifyContent:'space-between',marginBottom:8}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600}}>{item.nombre}</div>
+            <div style={{fontSize:11,color:'#64748b'}}>{fmt(item.precio)} c/u</div>
+          </div>
+          <Row style={{gap:5}}>
+            <button onClick={()=>updEntregaQty(item.id,item.cant-1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>-</button>
+            <span style={{minWidth:22,textAlign:'center',fontWeight:700,fontSize:14}}>{item.cant}</span>
+            <button onClick={()=>updEntregaQty(item.id,item.cant+1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>+</button>
+          </Row>
+        </Row>)}
+        <div style={{borderTop:'1px solid #334155',paddingTop:10,marginTop:4,marginBottom:12}}>
+          <Row style={{justifyContent:'space-between'}}>
+            <span style={{fontWeight:700,fontSize:15}}>Total</span>
+            <span style={{fontSize:22,fontWeight:800,color:'#38bdf8'}}>{fmt(entregaTotal)}</span>
+          </Row>
+        </div>
+        <Row style={{gap:8,marginBottom:12}}>
+          {[['contado','💵 Contado','#166534','#4ade80'],['credito','📋 Crédito','#78350f','#fcd34d']].map(([v,l,bg,col])=>(
+            <button key={v} onClick={()=>setEntregaPago(v)} style={{flex:1,padding:'9px',borderRadius:8,border:'none',background:entregaPago===v?bg:'#0f172a',color:entregaPago===v?col:'#94a3b8',fontSize:12,fontWeight:700,cursor:'pointer'}}>{l}</button>
+          ))}
+        </Row>
+        <BFill onClick={confirmarEntrega} style={{width:'100%'}} disabled={savingEntrega}>{savingEntrega?'Guardando…':'✅ Confirmar entrega'}</BFill>
+      </>}
+      {entregaScanOpen&&<BarcodeScanner onDetected={handleScanEntregaProducto} onClose={()=>setEntregaScanOpen(false)}/>}
+    </Modal>}
   </div>;
 }
 
