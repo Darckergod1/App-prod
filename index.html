@@ -70,34 +70,7 @@ const S_CLI = [
   {id:'c1',nombre:'Juan García',telefono:'6312001234',domicilio:'Calle Hidalgo 123',activo:true},
   {id:'c2',nombre:'María López',telefono:'6312005678',domicilio:'Av. Obregón 456',activo:true},
 ];
-// ============================================
-// NUEVO: Datos semilla para reparto
-// ============================================
-const S_RUTAS = [
-  {
-    id: 'r1',
-    fecha: new Date().toISOString(),
-    repartidor: '',
-    estado: 'planificada', // planificada | en_progreso | completada
-    clientes: [],
-    items: [],
-    entregas: [],
-    fechaFin: null
-  },
-];
 
-const S_ENTREGAS = [
-  {
-    id: 'e1',
-    rutaId: 'r1',
-    clienteId: 'c1',
-    fecha: new Date().toISOString(),
-    items: [{ id: 'p1', nombre: 'Frituras', cant: 2, precio: 10 }],
-    estado: 'entregado',
-    ubicacion: { lat: 28.5, lng: -106.0 },
-    firma: null
-  },
-];
 /* ── Icons ── */
 const Ic = ({children,size=18})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
 const CDown = ()=><Ic><polyline points="6 9 12 15 18 9"/></Ic>;
@@ -145,16 +118,42 @@ function BarcodeScanner({onDetected,onClose}){
   const [elId]=useState(()=>'scanner-'+uid());
   const [err,setErr]=useState('');
   useEffect(()=>{
+    if(typeof Html5Qrcode==='undefined'){ setErr('No se pudo cargar la librería de escaneo. Revisa tu conexión a internet.'); return; }
     let scanner=null, stopped=false, cancelled=false;
     (async()=>{
       try{
-        scanner=new Html5Qrcode(elId);
+        // Prioriza formatos de código de barras (EAN/UPC/CODE128/etc.) en vez de solo QR
+        const formatOpts=typeof Html5QrcodeSupportedFormats!=='undefined'?{
+          formatsToSupport:[
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.CODABAR,
+            Html5QrcodeSupportedFormats.ITF,
+            Html5QrcodeSupportedFormats.QR_CODE,
+          ],
+          verbose:false
+        }:{verbose:false};
+        scanner=new Html5Qrcode(elId,formatOpts);
         await scanner.start(
           {facingMode:'environment'},
-          {fps:10,qrbox:{width:260,height:130}},
+          {
+            fps:15,
+            // Caja de escaneo amplia y adaptable al tamaño real de la vista de cámara (mejor para códigos de barras horizontales)
+            qrbox:(vw,vh)=>{
+              const base=Math.floor(Math.min(vw,vh)*0.9);
+              return {width:Math.max(base,240),height:Math.max(Math.floor(base*0.5),110)};
+            },
+            // Usa el detector nativo del navegador cuando está disponible (más rápido/preciso en Chrome Android)
+            experimentalFeatures:{useBarCodeDetectorIfSupported:true}
+          },
           (decodedText)=>{
             if(stopped||cancelled) return;
             stopped=true;
+            if(navigator.vibrate) navigator.vibrate(80);
             scanner.stop().then(()=>scanner.clear()).catch(()=>{});
             onDetected(decodedText);
           },
@@ -168,7 +167,7 @@ function BarcodeScanner({onDetected,onClose}){
     {err
       ?<div style={{fontSize:13,color:'#f87171',textAlign:'center',padding:'24px 0'}}>{err}</div>
       :<div id={elId} style={{width:'100%',borderRadius:10,overflow:'hidden',background:'#000'}}/>}
-    <div style={{fontSize:11,color:'#64748b',textAlign:'center',marginTop:10}}>Apunta la cámara al código de barras del producto</div>
+    <div style={{fontSize:11,color:'#64748b',textAlign:'center',marginTop:10}}>Mantén el código recto, bien iluminado y a unos 10–15cm de la cámara</div>
   </Modal>;
 }
 
@@ -179,10 +178,11 @@ function Login(){
   const [err,setErr]=useState('');
   const [loading,setLoading]=useState(false);
   const handle=async()=>{
-    if(!email||!pw){ setErr('Ingresa tu correo y contraseña'); return; }
+    const emailTrim=email.trim(), pwTrim=pw.trim();
+    if(!emailTrim||!pwTrim){ setErr('Ingresa tu correo y contraseña'); return; }
     setErr(''); setLoading(true);
     try{
-      await auth.signInWithEmailAndPassword(email.trim(),pw);
+      await auth.signInWithEmailAndPassword(emailTrim,pwTrim);
     }catch(e){
       const map={
         'auth/unauthorized-domain':'Este dominio no está autorizado en Firebase (Authentication → Settings → Authorized domains).',
@@ -325,10 +325,14 @@ function Productos({productos,currentUser}){
     });
   };
   const save=async()=>{
-    if(!form.nombre||!form.precio) return;
+    if(!form.nombre||form.precio===''||form.precio===undefined){ alert('Nombre y precio son obligatorios'); return; }
     setSaving(true);
     const nuevoStock=+form.stock||0;
     const item={nombre:form.nombre,precio:+form.precio,stock:nuevoStock,unidad:form.unidad,codigoBarras:form.codigoBarras||''};
+    if(form.codigoBarras){
+      const existente=productos.find(p=>p.codigoBarras===form.codigoBarras&&p.id!==form.id);
+      if(existente){ alert(`❌ El código de barras "${form.codigoBarras}" ya está asignado a "${existente.nombre}"`); setSaving(false); return; }
+    }
     try{
       if(form.id){
         const anterior=productos.find(p=>p.id===form.id);
@@ -410,7 +414,7 @@ function Clientes({clientes,notas,creditos}){
   const [histId,setHistId]=useState(null);
   const cmap=creditos.reduce((m,c)=>{ if(c.saldo>0)m[c.clienteId]=(m[c.clienteId]||0)+c.saldo; return m; },{});
   const list=clientes
-    .filter(c=>filtro==='activos'?c.activo:filtro==='inactivos'?!c.activo:c.activo&&!!cmap[c.id])
+    .filter(c=>filtro==='activos'?c.activo:filtro==='inactivos'?!c.activo:!!cmap[c.id])
     .filter(c=>c.nombre.toLowerCase().includes(q.toLowerCase()));
   const save=async()=>{
     if(!form.nombre) return;
@@ -490,7 +494,9 @@ function CrearNota({productos,clientes}){
   const makeWA=(cl,items,tot,fp)=>{
     const lines=items.map(x=>`• ${x.nombre} x${x.cant} = ${fmt(x.precio*x.cant)}`).join('\n');
     const text=`🧾 *PEDIDO*\n👤 ${cl.nombre}\n\n${lines}\n\n💰 *Total: ${fmt(tot)}*\nPago: ${fp}`;
-    return `https://wa.me/52${(cl.telefono||'').replace(/\D/g,'')}?text=${encodeURIComponent(text)}`;
+    let telefono=(cl.telefono||'').replace(/\D/g,'');
+    if(!telefono.startsWith('52')&&telefono.length<=10) telefono='52'+telefono;
+    return `https://wa.me/${telefono}?text=${encodeURIComponent(text)}`;
   };
   const guardar=async()=>{
     if(!canSave) return;
@@ -501,17 +507,29 @@ function CrearNota({productos,clientes}){
         const ref=await db.collection('clientes').add({nombre:nuevoC.nombre,telefono:nuevoC.telefono||'',domicilio:'',activo:true});
         cl={id:ref.id,nombre:nuevoC.nombre,telefono:nuevoC.telefono||''};
       }
+
+      const notaRef=db.collection('notas').doc();
+      const credRef=pago==='credito'?db.collection('creditos').doc():null;
       const nota={fecha:new Date().toISOString(),clienteId:cl.id,clienteNombre:cl.nombre,clienteTelefono:cl.telefono||'',items:cart.map(x=>({...x})),total,formaPago:pago};
-      const notaRef=await db.collection('notas').add(nota);
-      if(pago==='credito') await db.collection('creditos').add({notaId:notaRef.id,clienteId:cl.id,clienteNombre:cl.nombre,fecha:nota.fecha,total,saldo:total,abonos:[]});
-      const batch=db.batch();
-      cart.forEach(item=>{
-        batch.update(db.collection('productos').doc(item.id),{stock:firebase.firestore.FieldValue.increment(-item.cant)});
+
+      await db.runTransaction(async(transaction)=>{
+        // Lecturas primero (requisito de Firestore) para escribir el stock resultante de forma consistente
+        const prodRefs=cart.map(item=>db.collection('productos').doc(item.id));
+        const snaps=await Promise.all(prodRefs.map(ref=>transaction.get(ref)));
+
+        transaction.set(notaRef,nota);
+        if(credRef) transaction.set(credRef,{notaId:notaRef.id,clienteId:cl.id,clienteNombre:cl.nombre,fecha:nota.fecha,total,saldo:total,abonos:[]});
+        // Descuenta stock sin bloquear la venta (puede quedar negativo; producción lo controla aparte)
+        snaps.forEach((snap,i)=>{
+          const item=cart[i];
+          const stockActual=snap.exists?(snap.data().stock||0):0;
+          transaction.update(prodRefs[i],{stock:stockActual-item.cant});
+        });
       });
-      await batch.commit();
+
       setDone({nota:{...nota,id:notaRef.id},cl});
       setCart([]); setCliSel(null); setNuevoC({nombre:'',telefono:''}); setCliMode('buscar');
-    }catch(e){ alert('Error al guardar el pedido: '+e.message); }
+    }catch(e){ alert('❌ Error al guardar el pedido: '+e.message); }
     setSaving(false);
   };
   if(done) return <div style={{padding:24,textAlign:'center'}}>
@@ -577,43 +595,10 @@ function CrearNota({productos,clientes}){
           <div style={{fontSize:11,color:'#64748b'}}>{fmt(item.precio)} c/u</div>
         </div>
         <Row style={{gap:5,flexShrink:0}}>
-  <button onClick={()=>updQty(item.id,item.cant-1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>-</button>
-  <input 
-    type="number" 
-    inputMode="numeric"
-    value={item.cant === 0 ? '' : item.cant} 
-    min="0"
-    onFocus={(e) => {
-      if (item.cant === 0) {
-        e.target.value = '';
-      }
-      e.target.select(); // Selecciona el texto completo al tocarlo para facilitar la edición
-    }}
-    onChange={e => {
-      const val = parseInt(e.target.value, 10);
-      updQty(item.id, isNaN(val) ? 0 : val);
-    }}
-    onBlur={() => {
-      if (item.cant === 0) {
-        updQty(item.id, 0); // Dispara la lógica por defecto si se queda vacío
-      }
-    }}
-    style={{
-      background: '#0f172a',
-      border: '1px solid #334155',
-      borderRadius: 6,
-      color: '#f1f5f9',
-      fontSize: 14,
-      fontWeight: 700,
-      width: 45,
-      height: 26,
-      textAlign: 'center',
-      MozAppearance: 'textfield',
-      WebkitAppearance: 'none'
-    }}
-  />
-  <button onClick={()=>updQty(item.id,item.cant+1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>+</button>
-</Row>
+          <button onClick={()=>updQty(item.id,item.cant-1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>-</button>
+          <span style={{minWidth:22,textAlign:'center',fontWeight:700,fontSize:14}}>{item.cant}</span>
+          <button onClick={()=>updQty(item.id,item.cant+1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>+</button>
+        </Row>
         <div style={{minWidth:62,textAlign:'right',fontWeight:700,color:'#38bdf8',fontSize:13}}>{fmt(item.precio*item.cant)}</div>
       </Row>)}
       <div style={{borderTop:'1px solid #334155',paddingTop:10,marginTop:4,marginBottom:12}}>
@@ -639,16 +624,22 @@ function CrearNota({productos,clientes}){
 function Creditos({creditos}){
   const [abonoId,setAbonoId]=useState(null);
   const [monto,setMonto]=useState('');
+  const [savingAbono,setSavingAbono]=useState(false);
   const pend=creditos.filter(c=>c.saldo>0);
   const totalPend=pend.reduce((s,c)=>s+c.saldo,0);
   const abonar=async(c)=>{
+    if(savingAbono) return;
     let m=parseFloat(monto); if(!m||m<=0) return;
     m=Math.min(m,c.saldo);
-    await db.collection('creditos').doc(c.id).update({
-      saldo:firebase.firestore.FieldValue.increment(-m),
-      abonos:firebase.firestore.FieldValue.arrayUnion({fecha:new Date().toISOString(),monto:m})
-    });
-    setMonto(''); setAbonoId(null);
+    setSavingAbono(true);
+    try{
+      await db.collection('creditos').doc(c.id).update({
+        saldo:firebase.firestore.FieldValue.increment(-m),
+        abonos:firebase.firestore.FieldValue.arrayUnion({fecha:new Date().toISOString(),monto:m})
+      });
+      setMonto(''); setAbonoId(null);
+    }catch(e){ alert('Error al registrar abono: '+e.message); }
+    setSavingAbono(false);
   };
   return <div style={{padding:'16px 12px'}}>
     <div style={{fontSize:20,fontWeight:800,marginBottom:12}}>💳 Créditos</div>
@@ -675,7 +666,7 @@ function Creditos({creditos}){
       </div>}
       {abonoId===c.id?<Row style={{gap:8}}>
         <Inp type="number" placeholder="Monto abono…" value={monto} onChange={e=>setMonto(e.target.value)} style={{flex:1}}/>
-        <BFill onClick={()=>abonar(c)} bg="#22c55e" color="#0f172a" style={{padding:'8px 14px'}}>✓</BFill>
+        <BFill onClick={()=>abonar(c)} bg="#22c55e" color="#0f172a" style={{padding:'8px 14px',opacity:savingAbono?0.6:1}} disabled={savingAbono}>{savingAbono?'…':'✓'}</BFill>
         <button onClick={()=>{setAbonoId(null);setMonto('');}} style={{background:'none',border:'none',color:'#94a3b8',cursor:'pointer',display:'flex'}}><XI size={18}/></button>
       </Row>:<BOut onClick={()=>setAbonoId(c.id)} color="#22c55e" style={{width:'100%'}}>+ Registrar abono</BOut>}
     </Card>)}
@@ -686,8 +677,15 @@ function Creditos({creditos}){
 function RutaReparto({productos,rutas}){
   const [scanOpen,setScanOpen]=useState(false);
   const [cart,setCart]=useState([]);
+  const [repartidor,setRepartidor]=useState('');
   const [msg,setMsg]=useState('');
+  const [saving,setSaving]=useState(false);
+  const [closing,setClosing]=useState(null);
+  const [regreso,setRegreso]=useState({});
+  const [scanCloseOpen,setScanCloseOpen]=useState(false);
   const flash=m=>{ setMsg(m); setTimeout(()=>setMsg(''),2500); };
+
+  /* ── Cargar ruta (salida) ── */
   const handleScan=code=>{
     setScanOpen(false);
     const p=productos.find(x=>x.codigoBarras&&x.codigoBarras===code);
@@ -700,14 +698,92 @@ function RutaReparto({productos,rutas}){
   };
   const updQty=(id,v)=>{ if(v<1){setCart(c=>c.filter(x=>x.id!==id));return;} setCart(c=>c.map(x=>x.id===id?{...x,cant:v}:x)); };
   const guardarRuta=async()=>{
-    if(cart.length===0) return;
-    await db.collection('rutas').add({fecha:new Date().toISOString(),items:cart});
-    setCart([]); flash('✅ Ruta guardada');
+    if(cart.length===0||saving) return;
+    if(!repartidor.trim()){ flash('⚠️ Indica el repartidor'); return; }
+    setSaving(true);
+    try{
+      await db.collection('rutas').add({fecha:new Date().toISOString(),repartidor:repartidor.trim(),estado:'abierta',salida:cart,regreso:[]});
+      setCart([]); setRepartidor(''); flash('✅ Ruta cargada');
+    }catch(e){ alert('Error al guardar ruta: '+e.message); }
+    setSaving(false);
   };
+
+  /* ── Cerrar ruta (registrar regreso) ── */
+  const abrirCierre=r=>{
+    setClosing(r);
+    const init={}; (r.salida||r.items||[]).forEach(it=>{ init[it.id]=0; });
+    setRegreso(init);
+  };
+  const scanRegreso=code=>{
+    setScanCloseOpen(false);
+    const items=closing.salida||closing.items||[];
+    const item=items.find(x=>{ const p=productos.find(pp=>pp.id===x.id); return p&&p.codigoBarras===code; });
+    if(!item){ flash('⚠️ Ese producto no está en la ruta cargada'); return; }
+    setRegreso(r=>{
+      const actual=r[item.id]||0;
+      if(actual>=item.cant){ flash('⚠️ Ya se registró todo lo cargado de '+item.nombre); return r; }
+      flash('✅ '+item.nombre+' registrado como regreso');
+      return {...r,[item.id]:actual+1};
+    });
+  };
+  const updRegreso=(id,v,max)=>setRegreso(r=>({...r,[id]:Math.max(0,Math.min(max,v))}));
+  const cerrarRuta=async()=>{
+    if(!closing||saving) return;
+    setSaving(true);
+    try{
+      const items=closing.salida||closing.items||[];
+      const regresoArr=items.map(it=>({id:it.id,nombre:it.nombre,unidad:it.unidad,cant:regreso[it.id]||0})).filter(it=>it.cant>0);
+      await db.collection('rutas').doc(closing.id).update({estado:'cerrada',regreso:regresoArr,fechaCierre:new Date().toISOString()});
+      setClosing(null); setRegreso({}); flash('✅ Ruta cerrada');
+    }catch(e){ alert('Error al cerrar ruta: '+e.message); }
+    setSaving(false);
+  };
+  const vendidoDe=r=>{
+    const items=r.salida||r.items||[];
+    const regMap={}; (r.regreso||[]).forEach(x=>regMap[x.id]=x.cant);
+    return items.reduce((s,x)=>s+(x.cant-(regMap[x.id]||0)),0);
+  };
+
+  if(closing){
+    const items=closing.salida||closing.items||[];
+    const totalCargado=items.reduce((s,x)=>s+x.cant,0);
+    const totalRegresado=Object.values(regreso).reduce((s,v)=>s+v,0);
+    return <div style={{padding:'16px 12px'}}>
+      <Row style={{justifyContent:'space-between',marginBottom:12}}>
+        <div style={{fontSize:20,fontWeight:800}}>📦 Cerrar ruta</div>
+        <button onClick={()=>{setClosing(null);setRegreso({});}} style={{background:'none',border:'none',color:'#94a3b8',cursor:'pointer',display:'flex'}}><XI/></button>
+      </Row>
+      <Card>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:2}}>{closing.repartidor||'—'}</div>
+        <div style={{fontSize:11,color:'#64748b'}}>{fDate(closing.fecha)} · cargado {totalCargado} · vendido {totalCargado-totalRegresado} · regresado {totalRegresado}</div>
+      </Card>
+      {msg&&<div style={{background:'#14532d',borderRadius:8,padding:'8px 12px',fontSize:13,color:'#4ade80',marginBottom:12}}>{msg}</div>}
+      <Card>
+        <BFill onClick={()=>setScanCloseOpen(true)} style={{width:'100%',fontSize:14,padding:12,marginBottom:10}}>📷 Escanear regreso</BFill>
+        <div style={{fontSize:11,color:'#64748b',marginBottom:12,textAlign:'center'}}>Escanea o ajusta manualmente cuántas piezas regresaron. El resto se cuenta como vendido en la calle.</div>
+        {items.map(it=><Row key={it.id} style={{justifyContent:'space-between',marginBottom:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600}}>{it.nombre}</div>
+            <div style={{fontSize:11,color:'#64748b'}}>cargado {it.cant} · vendido {it.cant-(regreso[it.id]||0)}</div>
+          </div>
+          <Row style={{gap:5}}>
+            <button onClick={()=>updRegreso(it.id,(regreso[it.id]||0)-1,it.cant)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>-</button>
+            <span style={{minWidth:22,textAlign:'center',fontWeight:700,fontSize:14}}>{regreso[it.id]||0}</span>
+            <button onClick={()=>updRegreso(it.id,(regreso[it.id]||0)+1,it.cant)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>+</button>
+          </Row>
+        </Row>)}
+        <BFill onClick={cerrarRuta} bg="#22c55e" color="#0f172a" style={{width:'100%',marginTop:6,opacity:saving?0.6:1}} disabled={saving}>{saving?'Guardando…':'✅ Cerrar ruta'}</BFill>
+      </Card>
+      {scanCloseOpen&&<BarcodeScanner onDetected={scanRegreso} onClose={()=>setScanCloseOpen(false)}/>}
+    </div>;
+  }
+
   return <div style={{padding:'16px 12px'}}>
     <div style={{fontSize:20,fontWeight:800,marginBottom:12}}>🚚 Ruta de reparto</div>
     {msg&&<div style={{background:'#14532d',borderRadius:8,padding:'8px 12px',fontSize:13,color:'#4ade80',marginBottom:12}}>{msg}</div>}
     <Card>
+      <Lbl>Repartidor</Lbl>
+      <Inp value={repartidor} onChange={e=>setRepartidor(e.target.value)} placeholder="Nombre del repartidor" style={{marginBottom:10}}/>
       <BFill onClick={()=>setScanOpen(true)} style={{width:'100%',fontSize:14,padding:12}}>📷 Escanear producto</BFill>
       <div style={{fontSize:11,color:'#64748b',marginTop:8,textAlign:'center'}}>Escanea el código de barras de cada producto que se cargue en la ruta; se agregará automáticamente.</div>
     </Card>
@@ -724,17 +800,28 @@ function RutaReparto({productos,rutas}){
           <button onClick={()=>updQty(item.id,item.cant+1)} style={{background:'#334155',border:'none',color:'#f1f5f9',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:15}}>+</button>
         </Row>
       </Row>)}
-      <BFill onClick={guardarRuta} style={{width:'100%',marginTop:6}}>💾 Guardar ruta</BFill>
+      <BFill onClick={guardarRuta} style={{width:'100%',marginTop:6,opacity:saving?0.6:1}} disabled={saving}>{saving?'Guardando…':'💾 Cargar ruta'}</BFill>
     </Card>}
     {rutas.length>0&&<Card>
-      <div style={{fontSize:11,color:'#64748b',fontWeight:700,marginBottom:10}}>RUTAS GUARDADAS</div>
-      {rutas.map(r=><div key={r.id} style={{paddingBottom:8,borderBottom:'1px solid #0f172a',marginBottom:8}}>
-        <Row style={{justifyContent:'space-between',marginBottom:4}}>
-          <span style={{fontSize:12,color:'#94a3b8'}}>{fDate(r.fecha)}</span>
-          <Tag color="#64748b">{r.items.reduce((s,x)=>s+x.cant,0)} artículos</Tag>
-        </Row>
-        {r.items.map(it=><div key={it.id} style={{fontSize:12,color:'#cbd5e1'}}>• {it.nombre} x{it.cant}</div>)}
-      </div>)}
+      <div style={{fontSize:11,color:'#64748b',fontWeight:700,marginBottom:10}}>RUTAS</div>
+      {rutas.map(r=>{
+        const items=r.salida||r.items||[];
+        const totalCargado=items.reduce((s,x)=>s+x.cant,0);
+        const cerrada=r.estado==='cerrada';
+        const vendido=cerrada?vendidoDe(r):null;
+        return <div key={r.id} style={{paddingBottom:10,borderBottom:'1px solid #0f172a',marginBottom:10}}>
+          <Row style={{justifyContent:'space-between',marginBottom:4}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600}}>{r.repartidor||'—'}</div>
+              <div style={{fontSize:11,color:'#94a3b8'}}>{fDate(r.fecha)}</div>
+            </div>
+            <Tag color={cerrada?'#64748b':'#facc15'}>{cerrada?'Cerrada':'Abierta'}</Tag>
+          </Row>
+          <div style={{fontSize:12,color:'#cbd5e1',marginBottom:6}}>Cargado: {totalCargado}{cerrada?` · Vendido: ${vendido} · Regresado: ${totalCargado-vendido}`:''}</div>
+          {items.map(it=><div key={it.id} style={{fontSize:12,color:'#cbd5e1'}}>• {it.nombre} x{it.cant}</div>)}
+          {!cerrada&&<BOut onClick={()=>abrirCierre(r)} color="#facc15" style={{marginTop:8,width:'100%'}}>📦 Cerrar ruta</BOut>}
+        </div>;
+      })}
     </Card>}
     {scanOpen&&<BarcodeScanner onDetected={handleScan} onClose={()=>setScanOpen(false)}/>}
   </div>;
@@ -870,6 +957,7 @@ function App(){
   const [creditos,setCreditos]=useState([]);
   const [rutas,setRutas]=useState([]);
   const [authChecked,setAuthChecked]=useState(false);
+  const [firestoreError,setFirestoreError]=useState(null);
 
   // Autenticación: escucha sesión de Firebase y carga el perfil (usuarios/{uid})
   useEffect(()=>{
@@ -918,22 +1006,23 @@ function App(){
         }
       }catch(e){ console.error('Error al sembrar datos iniciales',e); }
     })();
+    const errorHandler=(err)=>{ console.error('Firestore error:',err); setFirestoreError('⚠️ Error de conexión con la base de datos. Revisa tus permisos.'); };
     const unsubs=[
       db.collection('productos').onSnapshot(snap=>{
         setProductos(snap.docs.map(d=>({id:d.id,...d.data()})));
-      }),
+      },errorHandler),
       db.collection('clientes').onSnapshot(snap=>{
         setClientes(snap.docs.map(d=>({id:d.id,...d.data()})));
-      }),
-      db.collection('notas').orderBy('fecha','desc').onSnapshot(snap=>{
+      },errorHandler),
+      db.collection('notas').orderBy('fecha','desc').limit(500).onSnapshot(snap=>{
         setNotas(snap.docs.map(d=>({id:d.id,...d.data()})));
-      }),
+      },errorHandler),
       db.collection('creditos').onSnapshot(snap=>{
         setCreditos(snap.docs.map(d=>({id:d.id,...d.data()})));
-      }),
-      db.collection('rutas').orderBy('fecha','desc').onSnapshot(snap=>{
+      },errorHandler),
+      db.collection('rutas').orderBy('fecha','desc').limit(100).onSnapshot(snap=>{
         setRutas(snap.docs.map(d=>({id:d.id,...d.data()})));
-      }),
+      },errorHandler),
     ];
     return ()=>unsubs.forEach(u=>u());
   },[currentUser]);
@@ -956,6 +1045,7 @@ function App(){
         </button>
       </Row>
     </div>
+    {firestoreError&&<div style={{margin:'0 12px 10px',background:'#450a0a',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#fca5a5'}}>{firestoreError}</div>}
     {tab==='home'&&<Dashboard {...ctx}/>}
     {tab==='productos'&&<Productos {...ctx} currentUser={currentUser}/>}
     {tab==='nota'&&<CrearNota {...ctx}/>}
